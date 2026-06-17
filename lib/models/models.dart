@@ -5,3 +5,4 @@ export 'transaction_model.dart';
 export 'budget_model.dart';
 export 'goal_model.dart';
 export 'receipt_model.dart';
+export 'payment_card_model.dart';

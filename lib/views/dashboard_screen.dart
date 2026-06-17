@@ -8,6 +8,7 @@ import '../controllers/dashboard_controller.dart';
 import '../controllers/transaction_controller.dart';
 import '../controllers/account_controller.dart';
 import '../controllers/category_controller.dart';
+import '../controllers/card_controller.dart';
 import '../database/database_service.dart';
 import '../models/models.dart';
 import '../theme/app_theme.dart';
@@ -28,25 +29,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final transactions = Get.find<TransactionController>();
   final accounts = Get.find<AccountController>();
   final categories = Get.find<CategoryController>();
+  final cards = Get.find<CardController>();
 
   final _amountController = TextEditingController();
   final _descriptionController = TextEditingController();
-  String _type = 'expense';
-  String? _selectedAccountId;
-  String? _selectedCategoryId;
-  DateTime _selectedDate = DateTime.now();
-  final double _deltaSimulation = 0.0;
-
-  Color _colorFromHex(String hex) {
-    final h = hex.replaceAll('#', '');
-    if (h.length == 6) {
-      return Color(int.parse('ff$h', radix: 16));
-    }
-    if (h.length == 8) {
-      return Color(int.parse(h, radix: 16));
-    }
-    return AppTheme.accentColor;
-  }
 
   Color _randomColorForKey(String key) {
     final hash = key.codeUnits.fold<int>(
@@ -59,6 +45,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return HSLColor.fromAHSL(1.0, hue, saturation, lightness).toColor();
   }
 
+  bool _isCreditAccount(String? accountId) =>
+      accountId != null && accounts.getAccountById(accountId)?.type == 'credit';
+
+  int _resolveCreditCutoffDay(String accountId) {
+    final linkedCard = cards.getCardByLinkedAccountId(accountId);
+    final cardCutoffDay = (linkedCard?.cardType == 'credit')
+        ? linkedCard?.statementDay
+        : null;
+    final accountCutoffDay = accounts
+        .getAccountById(accountId)
+        ?.creditCutoffDay;
+    return (cardCutoffDay ?? accountCutoffDay ?? 31).clamp(1, 31);
+  }
+
   Future<void> _openQuickEntry() async {
     String type = 'expense';
     String? accountId;
@@ -66,6 +66,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     String? fromAccountId;
     String? toAccountId;
     DateTime date = DateTime.now();
+    bool isMsi = false;
+    int msiMonths = 3;
 
     await showModalBottomSheet(
       context: context,
@@ -76,6 +78,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
             final fromAmountController = TextEditingController();
             final toAmountController = TextEditingController();
             final tcController = TextEditingController(text: '1.0');
+            final msiMonthsController = TextEditingController(
+              text: msiMonths.toString(),
+            );
             return Padding(
               padding: EdgeInsets.only(
                 bottom: MediaQuery.of(ctx).viewInsets.bottom,
@@ -98,6 +103,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             categoryId = null;
                             fromAccountId = null;
                             toAccountId = null;
+                            isMsi = false;
                           }),
                           selectedColor: AppTheme.errorColor.withValues(
                             alpha: 0.12,
@@ -112,6 +118,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             categoryId = null;
                             fromAccountId = null;
                             toAccountId = null;
+                            isMsi = false;
                           }),
                           selectedColor: AppTheme.successColor.withValues(
                             alpha: 0.12,
@@ -125,6 +132,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             type = 'transfer';
                             categoryId = null;
                             accountId = null;
+                            isMsi = false;
                           }),
                           selectedColor: AppTheme.primaryColor.withValues(
                             alpha: 0.12,
@@ -154,7 +162,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               ),
                             )
                             .toList(),
-                        onChanged: (v) => setModalState(() => accountId = v),
+                        onChanged: (v) => setModalState(() {
+                          accountId = v;
+                          if (!_isCreditAccount(accountId)) {
+                            isMsi = false;
+                          }
+                        }),
                         decoration: const InputDecoration(labelText: 'Cuenta'),
                       ),
                     if (type != 'transfer') ...[
@@ -238,7 +251,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       ),
                                   decoration: InputDecoration(
                                     labelText:
-                                        'Monto en origen (${from!.currency})',
+                                        'Monto en origen (${from.currency})',
                                   ),
                                 ),
                                 const SizedBox(height: 12),
@@ -250,7 +263,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       ),
                                   decoration: InputDecoration(
                                     labelText:
-                                        'Monto en destino (${to!.currency})',
+                                        'Monto en destino (${to.currency})',
                                   ),
                                 ),
                               ],
@@ -269,6 +282,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                     ],
                     const SizedBox(height: 12),
+                    if (type != 'transfer' &&
+                        type == 'expense' &&
+                        _isCreditAccount(accountId)) ...[
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Compra a Meses Sin Intereses'),
+                        value: isMsi,
+                        onChanged: (value) =>
+                            setModalState(() => isMsi = value),
+                      ),
+                      if (isMsi)
+                        TextField(
+                          controller: msiMonthsController,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                            labelText: 'Plazo MSI (meses)',
+                          ),
+                        ),
+                      const SizedBox(height: 12),
+                    ],
                     if (type != 'transfer')
                       DropdownButtonFormField<String>(
                         initialValue: categoryId,
@@ -386,6 +419,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               ? (double.tryParse(tcController.text.trim()) ??
                                     0.0)
                               : 1.0;
+                          final parsedMsiMonths =
+                              int.tryParse(msiMonthsController.text.trim()) ??
+                              0;
+                          if (isMsi && parsedMsiMonths <= 1) {
+                            Get.snackbar(
+                              'Validación',
+                              'Ingresa un plazo MSI mayor a 1 mes',
+                            );
+                            return;
+                          }
+                          msiMonths = parsedMsiMonths > 1
+                              ? parsedMsiMonths
+                              : msiMonths;
                           if (needsTc && tc <= 0) {
                             Get.snackbar('Validación', 'Ingresa un TC válido');
                             return;
@@ -398,6 +444,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             amount: amount,
                             type: type,
                             transactionDate: date,
+                            purchaseDate: date,
                             description:
                                 _descriptionController.text.trim().isEmpty
                                 ? null
@@ -407,12 +454,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             createdAt: DateTime.now(),
                             exchangeRate: tc,
                           );
-                          await transactions.addTransaction(t);
+                          if (type == 'expense' &&
+                              _isCreditAccount(accountId)) {
+                            final cutoffDay = _resolveCreditCutoffDay(
+                              accountId!,
+                            );
+                            if (isMsi) {
+                              await transactions.addInstallmentPlan(
+                                baseTransaction: t,
+                                months: msiMonths,
+                                cutoffDay: cutoffDay,
+                              );
+                            } else {
+                              await transactions.addCreditExpenseWithCutoff(
+                                purchaseTransaction: t,
+                                cutoffDay: cutoffDay,
+                              );
+                            }
+                          } else {
+                            await transactions.addTransaction(t);
+                          }
                         }
                         _amountController.clear();
                         _descriptionController.clear();
                         await dashboard.loadDashboardData();
-                        if (mounted) Navigator.of(ctx).pop();
+                        if (ctx.mounted) Navigator.of(ctx).pop();
                       },
                       child: const Text('Guardar'),
                     ),
@@ -431,41 +497,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _amountController.dispose();
     _descriptionController.dispose();
     super.dispose();
-  }
-
-  Future<void> _submitQuickTransaction() async {
-    final amount = double.tryParse(_amountController.text.trim()) ?? 0.0;
-    if (amount <= 0 ||
-        _selectedAccountId == null ||
-        _selectedCategoryId == null) {
-      Get.snackbar('Validación', 'Completa monto, cuenta y categoría');
-      return;
-    }
-    final t = Transaction(
-      id: '',
-      userId: auth.currentUserId,
-      accountId: _selectedAccountId!,
-      categoryId: _selectedCategoryId!,
-      amount: amount,
-      type: _type,
-      transactionDate: _selectedDate,
-      description: _descriptionController.text.trim().isEmpty
-          ? null
-          : _descriptionController.text.trim(),
-      merchant: null,
-      isRecurring: false,
-      createdAt: DateTime.now(),
-    );
-    await transactions.addTransaction(t);
-    _amountController.clear();
-    _descriptionController.clear();
-    setState(() {
-      _type = 'expense';
-      _selectedAccountId = null;
-      _selectedCategoryId = null;
-      _selectedDate = DateTime.now();
-    });
-    await dashboard.loadDashboardData();
   }
 
   Future<void> _scanReceipt() async {
@@ -563,6 +594,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
               onTap: () {
                 Get.back();
                 Get.toNamed('/transaction/list');
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.credit_card),
+              title: const Text('Tarjetas'),
+              onTap: () {
+                Get.back();
+                Get.toNamed(AppRoutes.cards);
               },
             ),
             ListTile(
@@ -921,7 +960,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           shrinkWrap: true,
                           physics: const NeverScrollableScrollPhysics(),
                           itemCount: items.length,
-                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          separatorBuilder: (_, index) =>
+                              const Divider(height: 1),
                           itemBuilder: (ctx, i) {
                             final e = items[i];
                             return ListTile(
@@ -1054,7 +1094,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           shrinkWrap: true,
                           physics: const NeverScrollableScrollPhysics(),
                           itemCount: accs.length,
-                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          separatorBuilder: (_, index) =>
+                              const Divider(height: 1),
                           itemBuilder: (ctx, i) {
                             final a = accs[i];
                             final bal = accounts.computeBalanceForAccount(a.id);

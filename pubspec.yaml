@@ -54,6 +54,7 @@ dependencies:
   
   # Encryption
   encrypt: ^5.0.1
+  flutter_secure_storage: ^9.2.2
   
   # UI Components
   fl_chart: ^0.64.0

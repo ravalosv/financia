@@ -20,6 +20,15 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _rememberMe = false;
 
   @override
+  void initState() {
+    super.initState();
+    final u = _authController.currentUser.value;
+    if (u != null && u.email.isNotEmpty) {
+      _emailController.text = u.email;
+    }
+  }
+
+  @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
@@ -35,7 +44,9 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  void _loginWithBiometric() {}
+  void _loginWithBiometric() {
+    _authController.loginWithDeviceAuth();
+  }
 
   void _navigateToRegister() {
     Get.toNamed('/register');
@@ -47,6 +58,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final biometricEnabled =
+        _authController.currentUser.value?.biometricEnabled ?? false;
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
@@ -63,7 +76,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   width: 80,
                   height: 80,
                   decoration: BoxDecoration(
-                    color: AppTheme.primaryColor.withOpacity(0.1),
+                    color: AppTheme.primaryColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Icon(
@@ -103,6 +116,39 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    if (biometricEnabled) ...[
+                      Obx(
+                        () => ElevatedButton.icon(
+                          onPressed: _authController.isLoading.value
+                              ? null
+                              : _loginWithBiometric,
+                          icon: const Icon(Icons.fingerprint),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppTheme.primaryColor,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            elevation: 0,
+                          ),
+                          label: const Text(
+                            'Ingresar con biometría/PIN',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'O ingresa con email',
+                        style: TextStyle(color: AppTheme.textSecondary),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 16),
+                    ],
                     // Email field
                     TextFormField(
                       controller: _emailController,
@@ -263,7 +309,22 @@ class _LoginScreenState extends State<LoginScreen> {
                     const SizedBox(height: 16),
 
                     // Biometric login (if available)
-                    const SizedBox.shrink(),
+                    if (!biometricEnabled &&
+                        _authController.currentUser.value != null) ...[
+                      const SizedBox(height: 8),
+                      TextButton.icon(
+                        onPressed: _authController.isLoading.value
+                            ? null
+                            : () {
+                                Get.snackbar(
+                                  'Autenticación',
+                                  'Activa biometría/PIN en Configuraciones',
+                                );
+                              },
+                        icon: const Icon(Icons.fingerprint),
+                        label: const Text('Ingresar con biometría/PIN'),
+                      ),
+                    ],
                   ],
                 ),
               ),

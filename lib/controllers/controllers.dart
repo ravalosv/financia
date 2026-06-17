@@ -6,3 +6,4 @@ export 'account_controller.dart';
 export 'budget_controller.dart';
 export 'goal_controller.dart';
 export 'dashboard_controller.dart';
+export 'card_controller.dart';

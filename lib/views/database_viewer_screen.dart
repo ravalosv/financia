@@ -19,6 +19,7 @@ class _DatabaseViewerScreenState extends State<DatabaseViewerScreen> {
     'budgets',
     'goals',
     'receipts',
+    'cards',
   ];
   String? selectedTable;
   List<Map<String, dynamic>> records = [];
@@ -73,6 +74,11 @@ class _DatabaseViewerScreenState extends State<DatabaseViewerScreen> {
           break;
         case 'receipts':
           data = DatabaseService.getReceiptsBox().values
+              .map((e) => e.toJson())
+              .toList();
+          break;
+        case 'cards':
+          data = DatabaseService.getCardsBox().values
               .map((e) => e.toJson())
               .toList();
           break;

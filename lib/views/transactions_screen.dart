@@ -4,6 +4,7 @@ import '../controllers/transaction_controller.dart';
 import '../controllers/account_controller.dart';
 import '../controllers/category_controller.dart';
 import '../controllers/auth_controller.dart';
+import '../controllers/card_controller.dart';
 import '../models/models.dart';
 import '../theme/app_theme.dart';
 import '../utils/helpers.dart';
@@ -20,6 +21,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   final tx = Get.find<TransactionController>();
   final accounts = Get.find<AccountController>();
   final categories = Get.find<CategoryController>();
+  final cards = Get.find<CardController>();
 
   String? _filterAccount;
   String? _filterCategory;
@@ -34,6 +36,28 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     return '$dd/$mm/$yy';
   }
 
+  bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  DateTime _addMonthsKeepingDay(DateTime date, int monthsToAdd) {
+    final totalMonths = (date.year * 12) + date.month - 1 + monthsToAdd;
+    final year = totalMonths ~/ 12;
+    final month = (totalMonths % 12) + 1;
+    final day = date.day.clamp(1, _daysInMonth(year, month));
+    return DateTime(
+      year,
+      month,
+      day,
+      date.hour,
+      date.minute,
+      date.second,
+      date.millisecond,
+      date.microsecond,
+    );
+  }
+
+  int _daysInMonth(int year, int month) => DateTime(year, month + 1, 0).day;
+
   @override
   void initState() {
     super.initState();
@@ -47,8 +71,25 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     tx.setDateFilter(_filterStart, _filterEnd);
   }
 
-  Future<bool> _confirmDelete({required bool isTransfer}) async {
-    final result = await showDialog<bool>(
+  bool _isCreditAccount(String? accountId) =>
+      accountId != null && accounts.getAccountById(accountId)?.type == 'credit';
+
+  int _resolveCreditCutoffDay(String accountId) {
+    final linkedCard = cards.getCardByLinkedAccountId(accountId);
+    final cardCutoffDay = (linkedCard?.cardType == 'credit')
+        ? linkedCard?.statementDay
+        : null;
+    final accountCutoffDay = accounts
+        .getAccountById(accountId)
+        ?.creditCutoffDay;
+    return (cardCutoffDay ?? accountCutoffDay ?? 31).clamp(1, 31);
+  }
+
+  Future<String?> _confirmDelete(Transaction transaction) async {
+    final isTransfer =
+        transaction.categoryId == 'transfer_in' ||
+        transaction.categoryId == 'transfer_out';
+    final result = await showDialog<String>(
       context: context,
       builder: (ctx) {
         return AlertDialog(
@@ -56,22 +97,29 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
           content: Text(
             isTransfer
                 ? 'Se eliminarán ambas transacciones del traspaso. ¿Deseas continuar?'
+                : transaction.isInstallmentPlan
+                ? 'Esta mensualidad pertenece a un plan MSI. ¿Qué deseas borrar?'
                 : '¿Deseas eliminar esta transacción?',
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
+              onPressed: () => Navigator.of(ctx).pop(),
               child: const Text('Cancelar'),
             ),
+            if (transaction.isInstallmentPlan && !isTransfer)
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop('plan'),
+                child: const Text('Cancelar plan MSI'),
+              ),
             TextButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('Eliminar'),
+              onPressed: () => Navigator.of(ctx).pop('single'),
+              child: Text(isTransfer ? 'Eliminar' : 'Solo este mes'),
             ),
           ],
         );
       },
     );
-    return result ?? false;
+    return result;
   }
 
   Future<void> _pickDateRange() async {
@@ -82,9 +130,11 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       lastDate: DateTime(2100),
     );
     if (start == null) return;
+    if (!mounted) return;
+    final effectiveEnd = _filterEnd.isBefore(start) ? start : _filterEnd;
     final end = await showDatePicker(
       context: context,
-      initialDate: _filterEnd,
+      initialDate: effectiveEnd,
       firstDate: start,
       lastDate: DateTime(2100),
     );
@@ -106,10 +156,16 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     final tcController = TextEditingController(
       text: initial != null ? initial.exchangeRate.toStringAsFixed(6) : '1.0',
     );
+    final msiMonthsController = TextEditingController(
+      text: (initial?.installmentCount ?? 3).toString(),
+    );
     String type = initial?.type ?? 'expense';
     String? accountId = initial?.accountId ?? _filterAccount;
     String? categoryId = initial?.categoryId ?? _filterCategory;
-    DateTime date = initial?.transactionDate ?? DateTime.now();
+    DateTime purchaseDate =
+        initial?.purchaseDate ?? initial?.transactionDate ?? DateTime.now();
+    bool isMsi = initial?.isInstallmentPlan ?? false;
+    int msiMonths = initial?.installmentCount ?? 3;
 
     await showModalBottomSheet(
       context: context,
@@ -187,8 +243,9 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                             : null;
                         final base = auth.currentUserCurrency;
                         final needsTc = acc != null && acc.currency != base;
-                        if (!needsTc || type == 'transfer')
+                        if (!needsTc || type == 'transfer') {
                           return const SizedBox.shrink();
+                        }
                         return TextField(
                           controller: tcController,
                           keyboardType: const TextInputType.numberWithOptions(
@@ -201,6 +258,26 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                       },
                     ),
                     const SizedBox(height: 12),
+                    if (type == 'expense' &&
+                        _isCreditAccount(accountId) &&
+                        initial == null) ...[
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Compra a Meses Sin Intereses'),
+                        value: isMsi,
+                        onChanged: (value) =>
+                            setModalState(() => isMsi = value),
+                      ),
+                      if (isMsi)
+                        TextField(
+                          controller: msiMonthsController,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                            labelText: 'Plazo MSI (meses)',
+                          ),
+                        ),
+                      const SizedBox(height: 12),
+                    ],
                     DropdownButtonFormField<String>(
                       initialValue: categoryId,
                       items: categories.categories
@@ -226,14 +303,14 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                       onPressed: () async {
                         final d = await showDatePicker(
                           context: context,
-                          initialDate: date,
+                          initialDate: purchaseDate,
                           firstDate: DateTime(2000),
                           lastDate: DateTime(2100),
                         );
-                        if (d != null) setModalState(() => date = d);
+                        if (d != null) setModalState(() => purchaseDate = d);
                       },
                       child: Text(
-                        '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}',
+                        '${purchaseDate.year}-${purchaseDate.month.toString().padLeft(2, '0')}-${purchaseDate.day.toString().padLeft(2, '0')}',
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -250,14 +327,25 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                         final tc = needsTc
                             ? (double.tryParse(tcController.text.trim()) ?? 0.0)
                             : 1.0;
+                        final parsedMsiMonths =
+                            int.tryParse(msiMonthsController.text.trim()) ?? 0;
+                        if (isMsi && parsedMsiMonths <= 1) {
+                          Get.snackbar(
+                            'Validación',
+                            'Ingresa un plazo MSI mayor a 1 mes',
+                          );
+                          return;
+                        }
+                        msiMonths = parsedMsiMonths > 1
+                            ? parsedMsiMonths
+                            : msiMonths;
                         if (amount <= 0 ||
                             (needsTc && tc <= 0) ||
                             accountId == null ||
                             categoryId == null) {
                           Get.snackbar(
                             'Validación',
-                            'Completa monto, cuenta y categoría' +
-                                (needsTc ? ' y TC' : ''),
+                            'Completa monto, cuenta y categoría${needsTc ? ' y TC' : ''}',
                           );
                           return;
                         }
@@ -269,7 +357,8 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                             categoryId: categoryId!,
                             amount: amount,
                             type: type,
-                            transactionDate: date,
+                            transactionDate: purchaseDate,
+                            purchaseDate: purchaseDate,
                             description:
                                 descriptionController.text.trim().isEmpty
                                 ? null
@@ -279,14 +368,43 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                             createdAt: DateTime.now(),
                             exchangeRate: tc,
                           );
-                          await tx.addTransaction(t);
+                          final cutoffDay = _resolveCreditCutoffDay(accountId!);
+                          if (isMsi &&
+                              type == 'expense' &&
+                              _isCreditAccount(accountId)) {
+                            await tx.addInstallmentPlan(
+                              baseTransaction: t,
+                              months: msiMonths,
+                              cutoffDay: cutoffDay,
+                            );
+                          } else if (type == 'expense' &&
+                              _isCreditAccount(accountId)) {
+                            await tx.addCreditExpenseWithCutoff(
+                              purchaseTransaction: t,
+                              cutoffDay: cutoffDay,
+                            );
+                          } else {
+                            await tx.addTransaction(t);
+                          }
                         } else {
+                          final isCreditExpense =
+                              type == 'expense' && _isCreditAccount(accountId);
+                          final cutoffDayClamped = accountId != null
+                              ? _resolveCreditCutoffDay(accountId!)
+                              : 31;
+                          final transactionDate =
+                              isCreditExpense &&
+                                  !initial.isInstallmentPlan &&
+                                  purchaseDate.day > cutoffDayClamped
+                              ? _addMonthsKeepingDay(purchaseDate, 1)
+                              : purchaseDate;
                           final updated = initial.copyWith(
                             accountId: accountId,
                             categoryId: categoryId,
                             amount: amount,
                             type: type,
-                            transactionDate: date,
+                            transactionDate: transactionDate,
+                            purchaseDate: purchaseDate,
                             description:
                                 descriptionController.text.trim().isEmpty
                                 ? null
@@ -296,7 +414,9 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                           await tx.updateTransaction(updated);
                         }
                         _applyFilters();
-                        Navigator.of(ctx).pop();
+                        if (ctx.mounted) {
+                          Navigator.of(ctx).pop();
+                        }
                       },
                       child: const Text('Guardar'),
                     ),
@@ -478,12 +598,14 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                           await _openTransactionForm(initial: t);
                           return false;
                         } else {
-                          final ok = await _confirmDelete(
-                            isTransfer: isTransfer,
-                          );
-                          if (!ok) return false;
+                          final action = await _confirmDelete(t);
+                          if (action == null) return false;
                           if (isTransfer) {
                             await tx.deleteTransferPair(t);
+                          } else if (action == 'plan' && t.isInstallmentPlan) {
+                            await tx.deleteInstallmentPlan(
+                              t.installmentPlanId!,
+                            );
                           } else {
                             await tx.deleteTransaction(t.id);
                           }
@@ -505,9 +627,29 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                             auth.currentUserCurrency,
                           ),
                         ),
-                        subtitle: Text(
-                          '${t.categoryId} • ${_formatShortDate(t.transactionDate.toLocal())}${t.description != null ? ' • ${t.description}' : ''}',
-                        ),
+                        subtitle: Text(() {
+                          final parts = <String>[
+                            t.categoryId,
+                            _formatShortDate(t.transactionDate.toLocal()),
+                          ];
+                          final realPurchase =
+                              (t.purchaseDate ?? t.transactionDate).toLocal();
+                          if (!_sameDay(
+                            realPurchase,
+                            t.transactionDate.toLocal(),
+                          )) {
+                            parts.add(
+                              'Compra ${_formatShortDate(realPurchase)}',
+                            );
+                          }
+                          if (t.installmentLabel != null) {
+                            parts.add(t.installmentLabel!);
+                          }
+                          if (t.description != null) {
+                            parts.add(t.description!);
+                          }
+                          return parts.join(' • ');
+                        }()),
                         onTap:
                             (t.categoryId == 'transfer_in' ||
                                 t.categoryId == 'transfer_out')
@@ -516,7 +658,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                       ),
                     );
                   },
-                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  separatorBuilder: (_, index) => const Divider(height: 1),
                   itemCount: list.length,
                 ),
             ],
@@ -609,7 +751,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                                     ),
                                 decoration: InputDecoration(
                                   labelText:
-                                      'Monto en origen (${from!.currency})',
+                                      'Monto en origen (${from.currency})',
                                 ),
                               ),
                               const SizedBox(height: 12),
@@ -621,7 +763,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                                     ),
                                 decoration: InputDecoration(
                                   labelText:
-                                      'Monto en destino (${to!.currency})',
+                                      'Monto en destino (${to.currency})',
                                 ),
                               ),
                             ],
@@ -706,7 +848,9 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                           date: date,
                         );
                         _applyFilters();
-                        if (mounted) Navigator.of(ctx).pop();
+                        if (ctx.mounted) {
+                          Navigator.of(ctx).pop();
+                        }
                       },
                       child: const Text('Transferir'),
                     ),

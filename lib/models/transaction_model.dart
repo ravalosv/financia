@@ -6,39 +6,51 @@ part 'transaction_model.g.dart';
 class Transaction {
   @HiveField(0)
   final String id;
-  
+
   @HiveField(1)
   final String userId;
-  
+
   @HiveField(2)
   final String accountId;
-  
+
   @HiveField(3)
   final String categoryId;
-  
+
   @HiveField(4)
   final double amount;
-  
+
   @HiveField(5)
   final String type; // income, expense
-  
+
   @HiveField(6)
   final DateTime transactionDate;
-  
+
   @HiveField(7)
   final String? description;
-  
+
   @HiveField(8)
   final String? merchant;
-  
+
   @HiveField(9)
   final bool isRecurring;
-  
+
   @HiveField(10)
   final DateTime createdAt;
 
   @HiveField(11)
   final double exchangeRate;
+
+  @HiveField(12)
+  final String? installmentPlanId;
+
+  @HiveField(13)
+  final int? installmentIndex;
+
+  @HiveField(14)
+  final int? installmentCount;
+
+  @HiveField(15)
+  final DateTime? purchaseDate;
 
   Transaction({
     required this.id,
@@ -53,6 +65,10 @@ class Transaction {
     this.isRecurring = false,
     required this.createdAt,
     this.exchangeRate = 1.0,
+    this.installmentPlanId,
+    this.installmentIndex,
+    this.installmentCount,
+    this.purchaseDate,
   });
 
   Transaction copyWith({
@@ -68,6 +84,10 @@ class Transaction {
     bool? isRecurring,
     DateTime? createdAt,
     double? exchangeRate,
+    String? installmentPlanId,
+    int? installmentIndex,
+    int? installmentCount,
+    DateTime? purchaseDate,
   }) {
     return Transaction(
       id: id ?? this.id,
@@ -82,8 +102,21 @@ class Transaction {
       isRecurring: isRecurring ?? this.isRecurring,
       createdAt: createdAt ?? this.createdAt,
       exchangeRate: exchangeRate ?? this.exchangeRate,
+      installmentPlanId: installmentPlanId ?? this.installmentPlanId,
+      installmentIndex: installmentIndex ?? this.installmentIndex,
+      installmentCount: installmentCount ?? this.installmentCount,
+      purchaseDate: purchaseDate ?? this.purchaseDate,
     );
   }
+
+  bool get isInstallmentPlan =>
+      installmentPlanId != null &&
+      installmentPlanId!.isNotEmpty &&
+      installmentIndex != null &&
+      installmentCount != null;
+
+  String? get installmentLabel =>
+      isInstallmentPlan ? 'Mes $installmentIndex de $installmentCount' : null;
 
   Map<String, dynamic> toJson() {
     return {
@@ -94,11 +127,15 @@ class Transaction {
       'amount': amount,
       'type': type,
       'transaction_date': transactionDate.toIso8601String(),
+      'purchase_date': purchaseDate?.toIso8601String(),
       'description': description,
       'merchant': merchant,
       'is_recurring': isRecurring,
       'created_at': createdAt.toIso8601String(),
       'exchange_rate': exchangeRate,
+      'installment_plan_id': installmentPlanId,
+      'installment_index': installmentIndex,
+      'installment_count': installmentCount,
     };
   }
 
@@ -111,11 +148,17 @@ class Transaction {
       amount: json['amount'].toDouble(),
       type: json['type'],
       transactionDate: DateTime.parse(json['transaction_date']),
+      purchaseDate: json['purchase_date'] != null
+          ? DateTime.parse(json['purchase_date'])
+          : null,
       description: json['description'],
       merchant: json['merchant'],
       isRecurring: json['is_recurring'] ?? false,
       createdAt: DateTime.parse(json['created_at']),
       exchangeRate: (json['exchange_rate'] ?? 1.0).toDouble(),
+      installmentPlanId: json['installment_plan_id'] as String?,
+      installmentIndex: (json['installment_index'] as num?)?.toInt(),
+      installmentCount: (json['installment_count'] as num?)?.toInt(),
     );
   }
 }

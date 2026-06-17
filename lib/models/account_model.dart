@@ -6,27 +6,30 @@ part 'account_model.g.dart';
 class Account {
   @HiveField(0)
   final String id;
-  
+
   @HiveField(1)
   final String userId;
-  
+
   @HiveField(2)
   final String name;
-  
+
   @HiveField(3)
   final String type; // cash, checking, savings, credit, investment
-  
+
   @HiveField(4)
   final String currency;
-  
+
   @HiveField(5)
   final double balance;
-  
+
   @HiveField(6)
   final bool isActive;
-  
+
   @HiveField(7)
   final DateTime createdAt;
+
+  @HiveField(8)
+  final int? creditCutoffDay;
 
   Account({
     required this.id,
@@ -37,6 +40,7 @@ class Account {
     this.balance = 0.0,
     this.isActive = true,
     required this.createdAt,
+    this.creditCutoffDay,
   });
 
   Account copyWith({
@@ -48,6 +52,7 @@ class Account {
     double? balance,
     bool? isActive,
     DateTime? createdAt,
+    int? creditCutoffDay,
   }) {
     return Account(
       id: id ?? this.id,
@@ -58,6 +63,7 @@ class Account {
       balance: balance ?? this.balance,
       isActive: isActive ?? this.isActive,
       createdAt: createdAt ?? this.createdAt,
+      creditCutoffDay: creditCutoffDay ?? this.creditCutoffDay,
     );
   }
 
@@ -71,6 +77,7 @@ class Account {
       'balance': balance,
       'is_active': isActive,
       'created_at': createdAt.toIso8601String(),
+      'credit_cutoff_day': creditCutoffDay,
     };
   }
 
@@ -84,6 +91,7 @@ class Account {
       balance: json['balance']?.toDouble() ?? 0.0,
       isActive: json['is_active'] ?? true,
       createdAt: DateTime.parse(json['created_at']),
+      creditCutoffDay: (json['credit_cutoff_day'] as num?)?.toInt(),
     );
   }
 }

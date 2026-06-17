@@ -50,11 +50,16 @@ class _SplashScreenState extends State<SplashScreen>
   void _navigateToNextScreen() {
     final AuthController authController = Get.find<AuthController>();
 
-    if (authController.isAuthenticated.value) {
-      Get.offAllNamed('/dashboard');
-    } else {
-      Get.offAllNamed('/onboarding');
+    if (authController.currentUser.value != null) {
+      if (authController.isAuthenticated.value) {
+        Get.offAllNamed('/dashboard');
+      } else {
+        Get.offAllNamed('/login');
+      }
+      return;
     }
+
+    Get.offAllNamed('/onboarding');
   }
 
   @override
@@ -86,7 +91,7 @@ class _SplashScreenState extends State<SplashScreen>
                         borderRadius: BorderRadius.circular(30),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.1),
+                            color: Colors.black.withValues(alpha: 0.1),
                             blurRadius: 20,
                             offset: const Offset(0, 2),
                           ),
@@ -131,7 +136,7 @@ class _SplashScreenState extends State<SplashScreen>
                     'Your Personal Finance Manager',
                     style: TextStyle(
                       fontSize: 16,
-                      color: Colors.white.withOpacity(0.8),
+                      color: Colors.white.withValues(alpha: 0.8),
                       letterSpacing: 0.5,
                     ),
                   ),

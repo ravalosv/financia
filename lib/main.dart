@@ -7,10 +7,10 @@ import 'controllers/controllers.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   // Initialize database
   await DatabaseService.initialize();
-  
+
   // Initialize controllers
   Get.put(DatabaseService());
   Get.put(AuthController());
@@ -20,8 +20,9 @@ void main() async {
   Get.put(AccountController());
   Get.put(BudgetController());
   Get.put(GoalController());
+  Get.put(CardController());
   Get.put(DashboardController());
-  
+
   runApp(const MyApp());
 }
 

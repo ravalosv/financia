@@ -3,6 +3,7 @@ import '../models/account_model.dart';
 import '../models/transaction_model.dart';
 import '../database/database_service.dart';
 import 'auth_controller.dart';
+import 'card_controller.dart';
 import 'transaction_controller.dart';
 import '../utils/helpers.dart';
 
@@ -136,11 +137,15 @@ class AccountController extends GetxController {
         return;
       }
 
-      // Get account to check if it's default
-      final account = accounts.firstWhere((a) => a.id == accountId);
-
-      // Prevent deleting default accounts
-      // Allow deletion of any account not referenced
+      final cardController = Get.find<CardController>();
+      final linkedCard = cardController.getCardByLinkedAccountId(accountId);
+      if (linkedCard != null) {
+        Get.snackbar(
+          'Aviso',
+          'No es posible eliminar la cuenta porque tiene una tarjeta ligada',
+        );
+        return;
+      }
 
       // Delete from database
       await _databaseService.deleteAccount(accountId);
@@ -350,7 +355,7 @@ class AccountController extends GetxController {
   }
 
   // Create custom account
-  Future<void> createCustomAccount({
+  Future<Account> createCustomAccount({
     required String name,
     required String type,
     String currency = 'USD',
@@ -367,6 +372,7 @@ class AccountController extends GetxController {
         createdAt: DateTime.now(),
       );
       await addAccount(customAccount);
+      return customAccount;
     } catch (e) {
       throw Exception('Failed to create custom account: $e');
     }

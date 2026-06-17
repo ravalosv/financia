@@ -25,13 +25,17 @@ class TransactionAdapter extends TypeAdapter<Transaction> {
       isRecurring: fields[9] as bool,
       createdAt: fields[10] as DateTime,
       exchangeRate: (fields[11] as double?) ?? 1.0,
+      installmentPlanId: fields[12] as String?,
+      installmentIndex: fields[13] as int?,
+      installmentCount: fields[14] as int?,
+      purchaseDate: (fields[15] as DateTime?) ?? fields[6] as DateTime,
     );
   }
 
   @override
   void write(BinaryWriter writer, Transaction obj) {
     writer
-      ..writeByte(12)
+      ..writeByte(16)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -46,6 +50,8 @@ class TransactionAdapter extends TypeAdapter<Transaction> {
       ..write(obj.type)
       ..writeByte(6)
       ..write(obj.transactionDate)
+      ..writeByte(15)
+      ..write(obj.purchaseDate)
       ..writeByte(7)
       ..write(obj.description)
       ..writeByte(8)
@@ -55,7 +61,13 @@ class TransactionAdapter extends TypeAdapter<Transaction> {
       ..writeByte(10)
       ..write(obj.createdAt)
       ..writeByte(11)
-      ..write(obj.exchangeRate);
+      ..write(obj.exchangeRate)
+      ..writeByte(12)
+      ..write(obj.installmentPlanId)
+      ..writeByte(13)
+      ..write(obj.installmentIndex)
+      ..writeByte(14)
+      ..write(obj.installmentCount);
   }
 
   @override

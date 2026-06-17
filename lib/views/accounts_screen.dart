@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../controllers/account_controller.dart';
 import '../controllers/auth_controller.dart';
+import '../controllers/card_controller.dart';
 import '../models/account_model.dart';
 import '../theme/app_theme.dart';
 import '../utils/helpers.dart';
@@ -16,6 +17,7 @@ class AccountsScreen extends StatefulWidget {
 class _AccountsScreenState extends State<AccountsScreen> {
   final accounts = Get.find<AccountController>();
   final auth = Get.find<AuthController>();
+  final cards = Get.find<CardController>();
   String _query = '';
 
   Future<bool> _confirmDeleteAccount(Account a) async {
@@ -41,106 +43,192 @@ class _AccountsScreenState extends State<AccountsScreen> {
 
   Future<void> _openAccountForm({Account? initial}) async {
     final nameController = TextEditingController(text: initial?.name ?? '');
+    final currencyController = TextEditingController(
+      text: initial?.currency ?? auth.currentUserCurrency,
+    );
+    final cutoffDayController = TextEditingController(
+      text: initial?.creditCutoffDay?.toString() ?? '',
+    );
     String type = initial?.type ?? 'cash';
-    String currency = initial?.currency ?? auth.currentUserCurrency;
     bool isActive = initial?.isActive ?? true;
+    String? linkedCardId = initial == null
+        ? null
+        : cards.getCardByLinkedAccountId(initial.id)?.id;
 
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       builder: (ctx) {
-        return Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(ctx).viewInsets.bottom,
-          ),
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  initial == null ? 'Nueva cuenta' : 'Editar cuenta',
-                  style: AppTheme.titleMedium,
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: nameController,
-                  decoration: const InputDecoration(labelText: 'Nombre'),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  isExpanded: true,
-                  initialValue: type,
-                  items: const [
-                    DropdownMenuItem(value: 'cash', child: Text('Efectivo')),
-                    DropdownMenuItem(
-                      value: 'checking',
-                      child: Text('Cuenta corriente'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'savings',
-                      child: Text('Caja de ahorro'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'credit',
-                      child: Text('Tarjeta de crédito'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'investment',
-                      child: Text('Inversión'),
-                    ),
-                  ],
-                  onChanged: (v) => setState(() => type = v ?? 'cash'),
-                  decoration: const InputDecoration(labelText: 'Tipo'),
-                ),
-                const SizedBox(height: 12),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: TextEditingController(text: currency),
-                  onChanged: (v) => currency = v,
-                  decoration: const InputDecoration(labelText: 'Moneda'),
-                ),
-                const SizedBox(height: 12),
-                Row(
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final availableCards = cards.getAvailableCardsForAccount(
+              initial?.id,
+            );
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(ctx).viewInsets.bottom,
+              ),
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Expanded(child: Text('Activo')),
-                    Switch(
-                      value: isActive,
-                      onChanged: (v) => setState(() => isActive = v),
+                    Text(
+                      initial == null ? 'Nueva cuenta' : 'Editar cuenta',
+                      style: AppTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: nameController,
+                      decoration: const InputDecoration(labelText: 'Nombre'),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      isExpanded: true,
+                      initialValue: type,
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'cash',
+                          child: Text('Efectivo'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'checking',
+                          child: Text('Cuenta corriente'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'savings',
+                          child: Text('Caja de ahorro'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'credit',
+                          child: Text('Tarjeta de crédito'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'investment',
+                          child: Text('Inversión'),
+                        ),
+                      ],
+                      onChanged: (v) => setModalState(() => type = v ?? 'cash'),
+                      decoration: const InputDecoration(labelText: 'Tipo'),
+                    ),
+                    const SizedBox(height: 12),
+                    if (type == 'credit') ...[
+                      TextField(
+                        controller: cutoffDayController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Día de corte',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    DropdownButtonFormField<String?>(
+                      isExpanded: true,
+                      initialValue: linkedCardId,
+                      decoration: const InputDecoration(
+                        labelText: 'Tarjeta asociada',
+                      ),
+                      items: [
+                        const DropdownMenuItem<String?>(
+                          value: null,
+                          child: Text('Sin tarjeta asociada'),
+                        ),
+                        ...availableCards.map(
+                          (card) => DropdownMenuItem<String?>(
+                            value: card.id,
+                            child: Text(card.name),
+                          ),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        setModalState(() => linkedCardId = value);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: currencyController,
+                      decoration: const InputDecoration(labelText: 'Moneda'),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        const Expanded(child: Text('Activo')),
+                        Switch(
+                          value: isActive,
+                          onChanged: (v) => setModalState(() => isActive = v),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    ElevatedButton(
+                      onPressed: () async {
+                        final name = nameController.text.trim();
+                        final selectedCurrency = currencyController.text.trim();
+                        final cutoffText = cutoffDayController.text.trim();
+                        final cutoffDay = cutoffText.isEmpty
+                            ? null
+                            : int.tryParse(cutoffText);
+                        if (name.isEmpty) {
+                          Get.snackbar('Validación', 'Ingresa un nombre');
+                          return;
+                        }
+                        if (selectedCurrency.isEmpty) {
+                          Get.snackbar('Validación', 'Ingresa una moneda');
+                          return;
+                        }
+                        if (type == 'credit' &&
+                            cutoffDay != null &&
+                            (cutoffDay < 1 || cutoffDay > 31)) {
+                          Get.snackbar(
+                            'Validación',
+                            'El día de corte debe estar entre 1 y 31',
+                          );
+                          return;
+                        }
+                        if (initial == null) {
+                          final createdAccount = await accounts
+                              .createCustomAccount(
+                                name: name,
+                                type: type,
+                                currency: selectedCurrency,
+                              );
+                          if (type == 'credit') {
+                            await accounts.updateAccount(
+                              createdAccount.copyWith(
+                                creditCutoffDay: cutoffDay,
+                              ),
+                            );
+                          }
+                          await cards.assignCardToAccount(
+                            accountId: createdAccount.id,
+                            cardId: linkedCardId,
+                          );
+                        } else {
+                          final updated = initial.copyWith(
+                            name: name,
+                            type: type,
+                            currency: selectedCurrency,
+                            creditCutoffDay: type == 'credit'
+                                ? cutoffDay
+                                : null,
+                            isActive: isActive,
+                          );
+                          await accounts.updateAccount(updated);
+                          await cards.assignCardToAccount(
+                            accountId: initial.id,
+                            cardId: linkedCardId,
+                          );
+                        }
+                        if (ctx.mounted) Navigator.of(ctx).pop();
+                      },
+                      child: const Text('Guardar'),
                     ),
                   ],
                 ),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  onPressed: () async {
-                    final name = nameController.text.trim();
-                    if (name.isEmpty) {
-                      Get.snackbar('Validación', 'Ingresa un nombre');
-                      return;
-                    }
-                    if (initial == null) {
-                      await accounts.createCustomAccount(
-                        name: name,
-                        type: type,
-                        currency: currency,
-                      );
-                    } else {
-                      final updated = initial.copyWith(
-                        name: name,
-                        type: type,
-                        currency: currency,
-                        isActive: isActive,
-                      );
-                      await accounts.updateAccount(updated);
-                    }
-                    if (mounted) Navigator.of(ctx).pop();
-                  },
-                  child: const Text('Guardar'),
-                ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         );
       },
     );
@@ -199,9 +287,10 @@ class _AccountsScreenState extends State<AccountsScreen> {
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
                   itemCount: list.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  separatorBuilder: (_, index) => const Divider(height: 1),
                   itemBuilder: (ctx, i) {
                     final a = list[i];
+                    final linkedCard = cards.getCardByLinkedAccountId(a.id);
                     return Dismissible(
                       key: Key('acc_${a.id}'),
                       background: Container(
@@ -244,7 +333,15 @@ class _AccountsScreenState extends State<AccountsScreen> {
                         leading: Icon(_iconForType(a.type)),
                         title: Text(a.name),
                         subtitle: Text(
-                          '${a.type} • ${Helpers.formatCurrency(accounts.computeBalanceForAccount(a.id), auth.currentUserCurrency)}',
+                          [
+                            a.type,
+                            Helpers.formatCurrency(
+                              accounts.computeBalanceForAccount(a.id),
+                              auth.currentUserCurrency,
+                            ),
+                            if (linkedCard != null)
+                              'Tarjeta: ${linkedCard.name} • ****${linkedCard.last4}',
+                          ].join(' • '),
                         ),
                         trailing: Switch(
                           value: a.isActive,

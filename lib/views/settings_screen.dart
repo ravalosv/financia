@@ -19,6 +19,36 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final auth = Get.find<AuthController>();
 
+  Future<void> _toggleBiometric(bool enable) async {
+    if (auth.currentUser.value == null) {
+      Get.snackbar('Seguridad', 'No hay usuario activo');
+      return;
+    }
+
+    final ok = await auth.confirmDeviceAuth(
+      enable
+          ? 'Confirma para activar acceso con biometría/PIN'
+          : 'Confirma para desactivar acceso con biometría/PIN',
+    );
+    if (!ok) {
+      Get.snackbar(
+        'Seguridad',
+        'No se pudo validar la seguridad del dispositivo',
+      );
+      return;
+    }
+
+    await auth.updateUser(biometricEnabled: enable);
+    if (!mounted) return;
+    setState(() {});
+    Get.snackbar(
+      'Seguridad',
+      enable
+          ? 'Acceso con biometría/PIN activado'
+          : 'Acceso con biometría/PIN desactivado',
+    );
+  }
+
   Future<void> _exportData() async {
     try {
       final data = await DatabaseService().exportAllData();
@@ -79,9 +109,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Configuraciones'),
-      ),
+      appBar: AppBar(title: const Text('Configuraciones')),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -97,7 +125,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
                     isExpanded: true,
-                    value: auth.currentUserCurrency,
+                    key: ValueKey(auth.currentUserCurrency),
+                    initialValue: auth.currentUserCurrency,
                     items: const [
                       DropdownMenuItem(value: 'USD', child: Text('USD')),
                       DropdownMenuItem(value: 'EUR', child: Text('EUR')),
@@ -113,6 +142,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       }
                     },
                     decoration: const InputDecoration(labelText: 'Moneda base'),
+                  ),
+                  const SizedBox(height: 12),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Usar biometría/PIN al entrar'),
+                    subtitle: Text(
+                      (auth.currentUser.value?.biometricEnabled ?? false)
+                          ? 'Requiere autenticación del dispositivo al abrir la app'
+                          : 'Acceso normal sin validación del dispositivo',
+                      style: AppTheme.bodySmall,
+                    ),
+                    value: auth.currentUser.value?.biometricEnabled ?? false,
+                    onChanged: (v) async {
+                      await _toggleBiometric(v);
+                    },
                   ),
                 ],
               ),

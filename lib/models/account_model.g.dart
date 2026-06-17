@@ -21,13 +21,14 @@ class AccountAdapter extends TypeAdapter<Account> {
       balance: fields[5] as double,
       isActive: fields[6] as bool,
       createdAt: fields[7] as DateTime,
+      creditCutoffDay: fields[8] as int?,
     );
   }
 
   @override
   void write(BinaryWriter writer, Account obj) {
     writer
-      ..writeByte(8)
+      ..writeByte(9)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -43,7 +44,9 @@ class AccountAdapter extends TypeAdapter<Account> {
       ..writeByte(6)
       ..write(obj.isActive)
       ..writeByte(7)
-      ..write(obj.createdAt);
+      ..write(obj.createdAt)
+      ..writeByte(8)
+      ..write(obj.creditCutoffDay);
   }
 
   @override

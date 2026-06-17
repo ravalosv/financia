@@ -10,6 +10,7 @@ import '../views/accounts_screen.dart';
 import '../views/category_expense_detail_screen.dart';
 import '../views/settings_screen.dart';
 import '../views/database_viewer_screen.dart';
+import '../views/cards_screen.dart';
 
 class AppRoutes {
   static const String splash = '/splash';
@@ -31,6 +32,7 @@ class AppRoutes {
   static const String aiChat = '/ai-chat';
   static const String settings = '/settings';
   static const String dbViewer = '/db-viewer';
+  static const String cards = '/cards';
 
   static final List<GetPage> routes = [
     GetPage(name: splash, page: () => const SplashScreen()),
@@ -47,5 +49,6 @@ class AppRoutes {
     ),
     GetPage(name: settings, page: () => const SettingsScreen()),
     GetPage(name: dbViewer, page: () => const DatabaseViewerScreen()),
+    GetPage(name: cards, page: () => const CardsScreen()),
   ];
 }

@@ -39,27 +39,78 @@ class TransactionController extends GetxController {
   Future<void> addTransaction(Transaction transaction) async {
     try {
       isLoading(true);
-
-      // Generate ID if not provided
       if (transaction.id.isEmpty) {
         transaction = transaction.copyWith(id: Helpers.generateId());
       }
-
-      // Do not update account balance field; balances are derived from transactions
-
-      // Add to database
       await _databaseService.insertTransaction(transaction);
-
-      // Update local list
       transactions.add(transaction);
       applyFilters();
-
-      Get.snackbar('Success', 'Transaction added successfully');
+      Get.snackbar('Exito', 'Transaccion agregada correctamente');
     } catch (e) {
-      Get.snackbar('Error', 'Failed to add transaction: $e');
+      Get.snackbar('Error', 'No se pudo agregar la transaccion: $e');
     } finally {
       isLoading(false);
     }
+  }
+
+  Future<void> addInstallmentPlan({
+    required Transaction baseTransaction,
+    required int months,
+    required int cutoffDay,
+  }) async {
+    try {
+      isLoading(true);
+      final planId = Helpers.generateId();
+      final monthlyBase = _roundAmount(baseTransaction.amount / months);
+      double assignedAmount = 0;
+      final createdTransactions = <Transaction>[];
+      final purchaseDate =
+          baseTransaction.purchaseDate ?? baseTransaction.transactionDate;
+      final startOffset = purchaseDate.day > cutoffDay ? 1 : 0;
+
+      for (var i = 0; i < months; i++) {
+        final installmentAmount = i == months - 1
+            ? _roundAmount(baseTransaction.amount - assignedAmount)
+            : monthlyBase;
+        assignedAmount = _roundAmount(assignedAmount + installmentAmount);
+
+        final installment = baseTransaction.copyWith(
+          id: Helpers.generateId(),
+          amount: installmentAmount,
+          transactionDate: _addMonthsKeepingDay(purchaseDate, startOffset + i),
+          purchaseDate: purchaseDate,
+          createdAt: DateTime.now(),
+          installmentPlanId: planId,
+          installmentIndex: i + 1,
+          installmentCount: months,
+        );
+
+        await _databaseService.insertTransaction(installment);
+        createdTransactions.add(installment);
+      }
+
+      transactions.addAll(createdTransactions);
+      applyFilters();
+      Get.snackbar('Exito', 'Compra MSI guardada correctamente');
+    } catch (e) {
+      Get.snackbar('Error', 'No se pudo guardar el plan MSI: $e');
+    } finally {
+      isLoading(false);
+    }
+  }
+
+  Future<void> addCreditExpenseWithCutoff({
+    required Transaction purchaseTransaction,
+    required int cutoffDay,
+  }) async {
+    final purchaseDate =
+        purchaseTransaction.purchaseDate ?? purchaseTransaction.transactionDate;
+    final startOffset = purchaseDate.day > cutoffDay ? 1 : 0;
+    final paymentTransaction = purchaseTransaction.copyWith(
+      transactionDate: _addMonthsKeepingDay(purchaseDate, startOffset),
+      purchaseDate: purchaseDate,
+    );
+    await addTransaction(paymentTransaction);
   }
 
   Future<void> updateTransaction(Transaction transaction) async {
@@ -89,19 +140,34 @@ class TransactionController extends GetxController {
   Future<void> deleteTransaction(String transactionId) async {
     try {
       isLoading(true);
-
-      // Remove only the transaction; balances are derived from transactions
-
-      // Delete from database
       await _databaseService.deleteTransaction(transactionId);
-
-      // Update local list
       transactions.removeWhere((t) => t.id == transactionId);
       applyFilters();
-
-      Get.snackbar('Success', 'Transaction deleted successfully');
+      Get.snackbar('Exito', 'Transaccion eliminada correctamente');
     } catch (e) {
-      Get.snackbar('Error', 'Failed to delete transaction: $e');
+      Get.snackbar('Error', 'No se pudo eliminar la transaccion: $e');
+    } finally {
+      isLoading(false);
+    }
+  }
+
+  Future<void> deleteInstallmentPlan(String planId) async {
+    try {
+      isLoading(true);
+      final transactionsToDelete = transactions
+          .where((item) => item.installmentPlanId == planId)
+          .toList();
+
+      for (final item in transactionsToDelete) {
+        await _databaseService.deleteTransaction(item.id);
+      }
+
+      final ids = transactionsToDelete.map((item) => item.id).toSet();
+      transactions.removeWhere((item) => ids.contains(item.id));
+      applyFilters();
+      Get.snackbar('Exito', 'Plan MSI cancelado correctamente');
+    } catch (e) {
+      Get.snackbar('Error', 'No se pudo cancelar el plan MSI: $e');
     } finally {
       isLoading(false);
     }
@@ -250,4 +316,25 @@ class TransactionController extends GetxController {
         )
         .toList();
   }
+
+  DateTime _addMonthsKeepingDay(DateTime date, int monthsToAdd) {
+    final totalMonths = (date.year * 12) + date.month - 1 + monthsToAdd;
+    final year = totalMonths ~/ 12;
+    final month = (totalMonths % 12) + 1;
+    final day = date.day.clamp(1, _daysInMonth(year, month));
+    return DateTime(
+      year,
+      month,
+      day,
+      date.hour,
+      date.minute,
+      date.second,
+      date.millisecond,
+      date.microsecond,
+    );
+  }
+
+  int _daysInMonth(int year, int month) => DateTime(year, month + 1, 0).day;
+
+  double _roundAmount(double value) => double.parse(value.toStringAsFixed(2));
 }

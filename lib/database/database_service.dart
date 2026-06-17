@@ -14,6 +14,7 @@ class DatabaseService {
   static const String budgetsBox = 'budgets';
   static const String goalsBox = 'goals';
   static const String receiptsBox = 'receipts';
+  static const String cardsBox = 'cards';
 
   static sql.Database? _database;
   static bool _hiveInitialized = false;
@@ -38,6 +39,7 @@ class DatabaseService {
     Hive.registerAdapter(BudgetAdapter());
     Hive.registerAdapter(GoalAdapter());
     Hive.registerAdapter(ReceiptAdapter());
+    Hive.registerAdapter(PaymentCardAdapter());
 
     // Open all boxes
     await Hive.openBox<User>(usersBox);
@@ -47,6 +49,7 @@ class DatabaseService {
     await Hive.openBox<Budget>(budgetsBox);
     await Hive.openBox<Goal>(goalsBox);
     await Hive.openBox<Receipt>(receiptsBox);
+    await Hive.openBox<PaymentCard>(cardsBox);
 
     _hiveInitialized = true;
   }
@@ -86,6 +89,7 @@ class DatabaseService {
         type TEXT NOT NULL CHECK (type IN ('cash', 'checking', 'savings', 'credit', 'investment')),
         currency TEXT NOT NULL,
         balance DECIMAL(15,2) DEFAULT 0.00,
+        credit_cutoff_day INTEGER,
         is_active BOOLEAN DEFAULT true,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -118,9 +122,13 @@ class DatabaseService {
         amount DECIMAL(15,2) NOT NULL,
         type TEXT NOT NULL CHECK (type IN ('income', 'expense')),
         transaction_date DATE NOT NULL,
+        purchase_date DATE,
         description TEXT,
         merchant TEXT,
         is_recurring BOOLEAN DEFAULT false,
+        installment_plan_id TEXT,
+        installment_index INTEGER,
+        installment_count INTEGER,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
         FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
@@ -175,6 +183,29 @@ class DatabaseService {
       )
     ''');
 
+    await db.execute('''
+      CREATE TABLE cards (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        account_id TEXT,
+        name TEXT NOT NULL,
+        card_type TEXT NOT NULL CHECK (card_type IN ('debit', 'credit')),
+        encrypted_number TEXT NOT NULL,
+        last4 TEXT NOT NULL,
+        expiry_month INTEGER NOT NULL,
+        expiry_year INTEGER NOT NULL,
+        encrypted_cvv TEXT NOT NULL,
+        is_virtual BOOLEAN DEFAULT false,
+        encrypted_pin TEXT,
+        statement_day INTEGER,
+        payment_day INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE SET NULL
+      )
+    ''');
+
     // Create indexes for performance
     await db.execute(
       'CREATE INDEX idx_transactions_user_date ON transactions(user_id, transaction_date DESC)',
@@ -193,6 +224,9 @@ class DatabaseService {
     );
     await db.execute(
       'CREATE INDEX idx_categories_user_type ON categories(user_id, type)',
+    );
+    await db.execute(
+      'CREATE INDEX idx_cards_user_type ON cards(user_id, card_type)',
     );
   }
 
@@ -226,6 +260,7 @@ class DatabaseService {
     await Hive.box<Budget>(budgetsBox).clear();
     await Hive.box<Goal>(goalsBox).clear();
     await Hive.box<Receipt>(receiptsBox).clear();
+    await Hive.box<PaymentCard>(cardsBox).clear();
 
     final db = await database;
     await db.delete('users');
@@ -235,6 +270,7 @@ class DatabaseService {
     await db.delete('budgets');
     await db.delete('goals');
     await db.delete('receipts');
+    await db.delete('cards');
   }
 
   // Hive box getters
@@ -246,6 +282,7 @@ class DatabaseService {
   static Box<Budget> getBudgetsBox() => Hive.box<Budget>(budgetsBox);
   static Box<Goal> getGoalsBox() => Hive.box<Goal>(goalsBox);
   static Box<Receipt> getReceiptsBox() => Hive.box<Receipt>(receiptsBox);
+  static Box<PaymentCard> getCardsBox() => Hive.box<PaymentCard>(cardsBox);
 
   // Instance CRUD helpers using Hive
   Future<List<Transaction>> getAllTransactions() async {
@@ -343,34 +380,46 @@ class DatabaseService {
     await getGoalsBox().delete(id);
   }
 
+  Future<List<PaymentCard>> getAllCards() async {
+    return getCardsBox().values.toList();
+  }
+
+  Future<void> insertCard(PaymentCard card) async {
+    await getCardsBox().put(card.id, card);
+  }
+
+  Future<void> updateCard(PaymentCard card) async {
+    await getCardsBox().put(card.id, card);
+  }
+
+  Future<void> deleteCard(String id) async {
+    await getCardsBox().delete(id);
+  }
+
   Future<Map<String, dynamic>> exportAllData() async {
-    final usersData = getUsersBox()
-        .values
+    final usersData = getUsersBox().values
         .map((u) => u.toJson())
         .toList(growable: false);
-    final accountsData = getAccountsBox()
-        .values
+    final accountsData = getAccountsBox().values
         .map((a) => a.toJson())
         .toList(growable: false);
-    final categoriesData = getCategoriesBox()
-        .values
+    final categoriesData = getCategoriesBox().values
         .map((c) => c.toJson())
         .toList(growable: false);
-    final transactionsData = getTransactionsBox()
-        .values
+    final transactionsData = getTransactionsBox().values
         .map((t) => t.toJson())
         .toList(growable: false);
-    final budgetsData = getBudgetsBox()
-        .values
+    final budgetsData = getBudgetsBox().values
         .map((b) => b.toJson())
         .toList(growable: false);
-    final goalsData = getGoalsBox()
-        .values
+    final goalsData = getGoalsBox().values
         .map((g) => g.toJson())
         .toList(growable: false);
-    final receiptsData = getReceiptsBox()
-        .values
+    final receiptsData = getReceiptsBox().values
         .map((r) => r.toJson())
+        .toList(growable: false);
+    final cardsData = getCardsBox().values
+        .map((c) => c.toJson())
         .toList(growable: false);
     return {
       'version': _databaseVersion,
@@ -382,6 +431,7 @@ class DatabaseService {
       'budgets': budgetsData,
       'goals': goalsData,
       'receipts': receiptsData,
+      'cards': cardsData,
     };
   }
 
@@ -393,6 +443,7 @@ class DatabaseService {
     final buds = (data['budgets'] as List<dynamic>? ?? []);
     final gls = (data['goals'] as List<dynamic>? ?? []);
     final recs = (data['receipts'] as List<dynamic>? ?? []);
+    final cards = (data['cards'] as List<dynamic>? ?? []);
 
     for (final u in users) {
       final model = User.fromJson(Map<String, dynamic>.from(u));
@@ -421,6 +472,10 @@ class DatabaseService {
     for (final r in recs) {
       final model = Receipt.fromJson(Map<String, dynamic>.from(r));
       await getReceiptsBox().put(model.id, model);
+    }
+    for (final c in cards) {
+      final model = PaymentCard.fromJson(Map<String, dynamic>.from(c));
+      await getCardsBox().put(model.id, model);
     }
   }
 }
