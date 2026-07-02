@@ -15,6 +15,7 @@ class DatabaseService {
   static const String goalsBox = 'goals';
   static const String receiptsBox = 'receipts';
   static const String cardsBox = 'cards';
+  static const String recurringPaymentsBox = 'recurring_payments';
 
   static sql.Database? _database;
   static bool _hiveInitialized = false;
@@ -50,6 +51,7 @@ class DatabaseService {
     await Hive.openBox<Goal>(goalsBox);
     await Hive.openBox<Receipt>(receiptsBox);
     await Hive.openBox<PaymentCard>(cardsBox);
+    await Hive.openBox(recurringPaymentsBox);
 
     _hiveInitialized = true;
   }
@@ -261,6 +263,7 @@ class DatabaseService {
     await Hive.box<Goal>(goalsBox).clear();
     await Hive.box<Receipt>(receiptsBox).clear();
     await Hive.box<PaymentCard>(cardsBox).clear();
+    await Hive.box(recurringPaymentsBox).clear();
 
     final db = await database;
     await db.delete('users');
@@ -283,6 +286,7 @@ class DatabaseService {
   static Box<Goal> getGoalsBox() => Hive.box<Goal>(goalsBox);
   static Box<Receipt> getReceiptsBox() => Hive.box<Receipt>(receiptsBox);
   static Box<PaymentCard> getCardsBox() => Hive.box<PaymentCard>(cardsBox);
+  static Box getRecurringPaymentsBox() => Hive.box(recurringPaymentsBox);
 
   // Instance CRUD helpers using Hive
   Future<List<Transaction>> getAllTransactions() async {
@@ -396,6 +400,27 @@ class DatabaseService {
     await getCardsBox().delete(id);
   }
 
+  Future<List<RecurringPayment>> getAllRecurringPayments() async {
+    return getRecurringPaymentsBox().values
+        .whereType<Map>()
+        .map(
+          (item) => RecurringPayment.fromJson(Map<String, dynamic>.from(item)),
+        )
+        .toList();
+  }
+
+  Future<void> insertRecurringPayment(RecurringPayment payment) async {
+    await getRecurringPaymentsBox().put(payment.id, payment.toJson());
+  }
+
+  Future<void> updateRecurringPayment(RecurringPayment payment) async {
+    await getRecurringPaymentsBox().put(payment.id, payment.toJson());
+  }
+
+  Future<void> deleteRecurringPayment(String id) async {
+    await getRecurringPaymentsBox().delete(id);
+  }
+
   Future<Map<String, dynamic>> exportAllData() async {
     final usersData = getUsersBox().values
         .map((u) => u.toJson())
@@ -421,6 +446,10 @@ class DatabaseService {
     final cardsData = getCardsBox().values
         .map((c) => c.toJson())
         .toList(growable: false);
+    final recurringPaymentsData = getRecurringPaymentsBox().values
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
     return {
       'version': _databaseVersion,
       'generated_at': DateTime.now().toIso8601String(),
@@ -432,10 +461,14 @@ class DatabaseService {
       'goals': goalsData,
       'receipts': receiptsData,
       'cards': cardsData,
+      'recurring_payments': recurringPaymentsData,
     };
   }
 
-  Future<void> importAllData(Map<String, dynamic> data) async {
+  Future<void> importAllData(
+    Map<String, dynamic> data, {
+    bool replaceExisting = true,
+  }) async {
     final users = (data['users'] as List<dynamic>? ?? []);
     final acc = (data['accounts'] as List<dynamic>? ?? []);
     final cat = (data['categories'] as List<dynamic>? ?? []);
@@ -444,38 +477,69 @@ class DatabaseService {
     final gls = (data['goals'] as List<dynamic>? ?? []);
     final recs = (data['receipts'] as List<dynamic>? ?? []);
     final cards = (data['cards'] as List<dynamic>? ?? []);
+    final recurringPayments =
+        (data['recurring_payments'] as List<dynamic>? ?? []);
 
-    for (final u in users) {
-      final model = User.fromJson(Map<String, dynamic>.from(u));
+    final importedUsers = users
+        .map((item) => User.fromJson(Map<String, dynamic>.from(item)))
+        .toList(growable: false);
+    final importedAccounts = acc
+        .map((item) => Account.fromJson(Map<String, dynamic>.from(item)))
+        .toList(growable: false);
+    final importedCategories = cat
+        .map((item) => Category.fromJson(Map<String, dynamic>.from(item)))
+        .toList(growable: false);
+    final importedTransactions = txs
+        .map((item) => Transaction.fromJson(Map<String, dynamic>.from(item)))
+        .toList(growable: false);
+    final importedBudgets = buds
+        .map((item) => Budget.fromJson(Map<String, dynamic>.from(item)))
+        .toList(growable: false);
+    final importedGoals = gls
+        .map((item) => Goal.fromJson(Map<String, dynamic>.from(item)))
+        .toList(growable: false);
+    final importedReceipts = recs
+        .map((item) => Receipt.fromJson(Map<String, dynamic>.from(item)))
+        .toList(growable: false);
+    final importedCards = cards
+        .map((item) => PaymentCard.fromJson(Map<String, dynamic>.from(item)))
+        .toList(growable: false);
+    final importedRecurringPayments = recurringPayments
+        .map(
+          (item) => RecurringPayment.fromJson(Map<String, dynamic>.from(item)),
+        )
+        .toList(growable: false);
+
+    if (replaceExisting) {
+      await clearAll();
+    }
+
+    for (final model in importedUsers) {
       await getUsersBox().put(model.id, model);
     }
-    for (final a in acc) {
-      final model = Account.fromJson(Map<String, dynamic>.from(a));
+    for (final model in importedAccounts) {
       await insertAccount(model);
     }
-    for (final c in cat) {
-      final model = Category.fromJson(Map<String, dynamic>.from(c));
+    for (final model in importedCategories) {
       await insertCategory(model);
     }
-    for (final t in txs) {
-      final model = Transaction.fromJson(Map<String, dynamic>.from(t));
+    for (final model in importedTransactions) {
       await insertTransaction(model);
     }
-    for (final b in buds) {
-      final model = Budget.fromJson(Map<String, dynamic>.from(b));
+    for (final model in importedBudgets) {
       await insertBudget(model);
     }
-    for (final g in gls) {
-      final model = Goal.fromJson(Map<String, dynamic>.from(g));
+    for (final model in importedGoals) {
       await insertGoal(model);
     }
-    for (final r in recs) {
-      final model = Receipt.fromJson(Map<String, dynamic>.from(r));
+    for (final model in importedReceipts) {
       await getReceiptsBox().put(model.id, model);
     }
-    for (final c in cards) {
-      final model = PaymentCard.fromJson(Map<String, dynamic>.from(c));
+    for (final model in importedCards) {
       await getCardsBox().put(model.id, model);
+    }
+    for (final model in importedRecurringPayments) {
+      await insertRecurringPayment(model);
     }
   }
 }

@@ -6,3 +6,5 @@ export 'budget_model.dart';
 export 'goal_model.dart';
 export 'receipt_model.dart';
 export 'payment_card_model.dart';
+export 'credit_card_payment_occurrence.dart';
+export 'recurring_payment_model.dart';

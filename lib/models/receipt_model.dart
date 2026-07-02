@@ -6,19 +6,19 @@ part 'receipt_model.g.dart';
 class Receipt {
   @HiveField(0)
   final String id;
-  
+
   @HiveField(1)
   final String? transactionId;
-  
+
   @HiveField(2)
   final String imagePath;
-  
+
   @HiveField(3)
   final String? extractedText;
-  
+
   @HiveField(4)
   final double? confidenceScore;
-  
+
   @HiveField(5)
   final DateTime processedAt;
 

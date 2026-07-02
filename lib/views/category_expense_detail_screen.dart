@@ -9,7 +9,10 @@ class CategoryExpenseDetailScreen extends StatelessWidget {
   const CategoryExpenseDetailScreen({super.key});
 
   Color _randomColorForKey(String key) {
-    final hash = key.codeUnits.fold<int>(0, (acc, c) => (acc * 31 + c) & 0xFFFFFFFF);
+    final hash = key.codeUnits.fold<int>(
+      0,
+      (acc, c) => (acc * 31 + c) & 0xFFFFFFFF,
+    );
     final hue = (hash % 360).toDouble();
     const saturation = 0.7;
     const lightness = 0.55;
@@ -22,9 +25,7 @@ class CategoryExpenseDetailScreen extends StatelessWidget {
     final auth = Get.find<AuthController>();
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Detalle de gasto por categoría'),
-      ),
+      appBar: AppBar(title: const Text('Detalle de gasto por categoría')),
       body: Obx(() {
         final data = dashboard.categoryExpenseData;
         if (data.isEmpty) {
@@ -32,7 +33,10 @@ class CategoryExpenseDetailScreen extends StatelessWidget {
             child: Text('Sin datos de gasto', style: AppTheme.bodyMedium),
           );
         }
-        final total = data.fold<double>(0.0, (s, e) => s + (e['amount'] as double));
+        final total = data.fold<double>(
+          0.0,
+          (s, e) => s + (e['amount'] as double),
+        );
 
         return SingleChildScrollView(
           padding: const EdgeInsets.all(16),
@@ -49,7 +53,9 @@ class CategoryExpenseDetailScreen extends StatelessWidget {
                     const SizedBox(height: 6),
                     Text(
                       Helpers.formatCurrency(total, auth.currentUserCurrency),
-                      style: AppTheme.titleMedium.copyWith(color: AppTheme.primaryColor),
+                      style: AppTheme.titleMedium.copyWith(
+                        color: AppTheme.primaryColor,
+                      ),
                     ),
                   ],
                 ),
@@ -69,13 +75,18 @@ class CategoryExpenseDetailScreen extends StatelessWidget {
                     final pct = total > 0 ? (amount / total) * 100 : 0.0;
                     return ListTile(
                       leading: CircleAvatar(
-                        backgroundColor: _randomColorForKey(e['categoryId'] as String),
+                        backgroundColor: _randomColorForKey(
+                          e['categoryId'] as String,
+                        ),
                         radius: 10,
                       ),
                       title: Text(e['categoryName'] as String),
                       subtitle: Text('${pct.toStringAsFixed(1)}%'),
                       trailing: Text(
-                        Helpers.formatCurrency(amount, auth.currentUserCurrency),
+                        Helpers.formatCurrency(
+                          amount,
+                          auth.currentUserCurrency,
+                        ),
                         style: AppTheme.titleSmall,
                       ),
                     );
@@ -89,4 +100,3 @@ class CategoryExpenseDetailScreen extends StatelessWidget {
     );
   }
 }
-

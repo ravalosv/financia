@@ -9,9 +9,11 @@ import '../controllers/transaction_controller.dart';
 import '../controllers/account_controller.dart';
 import '../controllers/category_controller.dart';
 import '../controllers/card_controller.dart';
+import '../controllers/recurring_payment_controller.dart';
 import '../database/database_service.dart';
 import '../models/models.dart';
 import '../theme/app_theme.dart';
+import '../utils/credit_card_date_utils.dart';
 import '../utils/helpers.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../routes/app_routes.dart';
@@ -30,6 +32,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final accounts = Get.find<AccountController>();
   final categories = Get.find<CategoryController>();
   final cards = Get.find<CardController>();
+  final recurring = Get.find<RecurringPaymentController>();
 
   final _amountController = TextEditingController();
   final _descriptionController = TextEditingController();
@@ -48,15 +51,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _isCreditAccount(String? accountId) =>
       accountId != null && accounts.getAccountById(accountId)?.type == 'credit';
 
-  int _resolveCreditCutoffDay(String accountId) {
-    final linkedCard = cards.getCardByLinkedAccountId(accountId);
-    final cardCutoffDay = (linkedCard?.cardType == 'credit')
-        ? linkedCard?.statementDay
-        : null;
-    final accountCutoffDay = accounts
-        .getAccountById(accountId)
-        ?.creditCutoffDay;
-    return (cardCutoffDay ?? accountCutoffDay ?? 31).clamp(1, 31);
+  CreditCardPaymentConfig? _resolveCreditPaymentConfig(String accountId) {
+    final account = accounts.getAccountById(accountId);
+    return cards.getPaymentConfigForAccount(
+      accountId,
+      fallbackStatementDay: account?.creditCutoffDay,
+    );
   }
 
   Future<void> _openQuickEntry() async {
@@ -456,19 +456,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           );
                           if (type == 'expense' &&
                               _isCreditAccount(accountId)) {
-                            final cutoffDay = _resolveCreditCutoffDay(
+                            final creditConfig = _resolveCreditPaymentConfig(
                               accountId!,
                             );
                             if (isMsi) {
                               await transactions.addInstallmentPlan(
                                 baseTransaction: t,
                                 months: msiMonths,
-                                cutoffDay: cutoffDay,
+                                statementDay: creditConfig?.statementDay ?? 31,
+                                paymentGraceDays:
+                                    creditConfig?.paymentGraceDays,
+                                legacyPaymentDay:
+                                    creditConfig?.legacyPaymentDay,
                               );
                             } else {
-                              await transactions.addCreditExpenseWithCutoff(
+                              await transactions.addCreditExpense(
                                 purchaseTransaction: t,
-                                cutoffDay: cutoffDay,
+                                statementDay: creditConfig?.statementDay ?? 31,
+                                paymentGraceDays:
+                                    creditConfig?.paymentGraceDays,
+                                legacyPaymentDay:
+                                    creditConfig?.legacyPaymentDay,
                               );
                             }
                           } else {
@@ -546,6 +554,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return '$dd/$mm/$yy';
   }
 
+  bool _isOverdue(DateTime date) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final due = DateTime(date.year, date.month, date.day);
+    return due.isBefore(today);
+  }
+
+  Future<void> _openRecurringPaymentTransaction(
+    RecurringPaymentOccurrence occurrence,
+  ) async {
+    await Get.toNamed(
+      AppRoutes.transactionList,
+      arguments: {
+        'recurringPaymentPrefill': {
+          'paymentId': occurrence.payment.id,
+          'recipient': occurrence.payment.recipient,
+          'amount': occurrence.payment.amount,
+          'dueDate': occurrence.dueDate.toIso8601String(),
+          'description': occurrence.payment.recipient,
+          'type': 'expense',
+        },
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -602,6 +635,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
               onTap: () {
                 Get.back();
                 Get.toNamed(AppRoutes.cards);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.autorenew),
+              title: const Text('Pagos recurrentes'),
+              onTap: () {
+                Get.back();
+                Get.toNamed(AppRoutes.recurringPayments);
               },
             ),
             ListTile(
@@ -843,6 +884,253 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                   ),
                 ],
+              ),
+              const SizedBox(height: 24),
+              if (dashboard.projectedRecurringExpense.value > 0 &&
+                  dashboard.selectedAccountId.value.isEmpty) ...[
+                Container(
+                  decoration: AppTheme.cardDecoration,
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.event_repeat,
+                        color: AppTheme.warningColor,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Recurrentes del mes: ${Helpers.formatCurrency(dashboard.projectedRecurringExpense.value, auth.currentUserCurrency)}',
+                          style: AppTheme.bodyMedium,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+              ],
+              if (dashboard.activeReminderOccurrences.isNotEmpty ||
+                  dashboard.activeCardPaymentOccurrences.isNotEmpty) ...[
+                Container(
+                  decoration: AppTheme.cardDecoration,
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        'Recordatorios activos',
+                        style: AppTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 8),
+                      ...dashboard.activeReminderOccurrences.map(
+                        (occurrence) => ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(
+                            Icons.notifications_active,
+                            color: AppTheme.warningColor,
+                          ),
+                          title: Text(occurrence.payment.recipient),
+                          subtitle: Text(
+                            'Vence ${_formatShortDate(occurrence.dueDate)}',
+                          ),
+                          trailing: TextButton(
+                            onPressed: () async {
+                              await _openRecurringPaymentTransaction(
+                                occurrence,
+                              );
+                              await dashboard.loadDashboardData();
+                            },
+                            child: const Text('Completar'),
+                          ),
+                        ),
+                      ),
+                      ...dashboard.activeCardPaymentOccurrences.map(
+                        (occurrence) => ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(
+                            Icons.credit_card,
+                            color: AppTheme.warningColor,
+                          ),
+                          title: Text(occurrence.card.name),
+                          subtitle: Text(
+                            'Cuenta ${occurrence.accountName} • Vence ${_formatShortDate(occurrence.dueDate)}',
+                          ),
+                          trailing: Text(
+                            Helpers.formatCurrency(
+                              occurrence.amount,
+                              occurrence.currency,
+                            ),
+                            style: AppTheme.titleSmall,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+              ],
+              Container(
+                decoration: AppTheme.cardDecoration,
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Proximos pagos y vencidos',
+                            style: AppTheme.titleMedium,
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () =>
+                              Get.toNamed(AppRoutes.recurringPayments),
+                          child: const Text('Ver todos'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    if (dashboard.upcomingRecurringPayments.isEmpty &&
+                        dashboard.upcomingCardPayments.isEmpty)
+                      Text(
+                        'Sin pagos proximos ni vencidos',
+                        style: AppTheme.bodyMedium,
+                        textAlign: TextAlign.center,
+                      )
+                    else ...[
+                      ...dashboard.upcomingRecurringPayments
+                          .take(6)
+                          .map(
+                            (occurrence) => Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Padding(
+                                    padding: EdgeInsets.only(top: 2),
+                                    child: Icon(Icons.schedule),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          occurrence.payment.recipient,
+                                          style: AppTheme.bodyLarge,
+                                        ),
+                                        const SizedBox(height: 2),
+                                        if (_isOverdue(occurrence.dueDate))
+                                          Text(
+                                            'Vencido',
+                                            style: AppTheme.bodySmall.copyWith(
+                                              color: AppTheme.errorColor,
+                                            ),
+                                          ),
+                                        if (_isOverdue(occurrence.dueDate))
+                                          const SizedBox(height: 2),
+                                        Text(
+                                          _formatShortDate(occurrence.dueDate),
+                                          style: AppTheme.bodyMedium.copyWith(
+                                            color:
+                                                _isOverdue(occurrence.dueDate)
+                                                ? AppTheme.errorColor
+                                                : null,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          Helpers.formatCurrency(
+                                            occurrence.payment.amount,
+                                            auth.currentUserCurrency,
+                                          ),
+                                          style: AppTheme.titleSmall,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  if (!occurrence.isCompleted) ...[
+                                    const SizedBox(width: 12),
+                                    TextButton(
+                                      onPressed: () async {
+                                        await _openRecurringPaymentTransaction(
+                                          occurrence,
+                                        );
+                                        await dashboard.loadDashboardData();
+                                      },
+                                      child: const Text('Completar'),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          ),
+                      ...dashboard.upcomingCardPayments
+                          .take(6)
+                          .map(
+                            (occurrence) => Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Padding(
+                                    padding: EdgeInsets.only(top: 2),
+                                    child: Icon(Icons.credit_card),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          occurrence.card.name,
+                                          style: AppTheme.bodyLarge,
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          occurrence.accountName,
+                                          style: AppTheme.bodySmall,
+                                        ),
+                                        const SizedBox(height: 2),
+                                        if (_isOverdue(occurrence.dueDate))
+                                          Text(
+                                            'Vencido',
+                                            style: AppTheme.bodySmall.copyWith(
+                                              color: AppTheme.errorColor,
+                                            ),
+                                          ),
+                                        if (_isOverdue(occurrence.dueDate))
+                                          const SizedBox(height: 2),
+                                        Text(
+                                          _formatShortDate(occurrence.dueDate),
+                                          style: AppTheme.bodyMedium.copyWith(
+                                            color:
+                                                _isOverdue(occurrence.dueDate)
+                                                ? AppTheme.errorColor
+                                                : null,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          Helpers.formatCurrency(
+                                            occurrence.amount,
+                                            occurrence.currency,
+                                          ),
+                                          style: AppTheme.titleSmall,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                    ],
+                  ],
+                ),
               ),
               const SizedBox(height: 24),
               Container(

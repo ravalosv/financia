@@ -6,28 +6,28 @@ part 'category_model.g.dart';
 class Category {
   @HiveField(0)
   final String id;
-  
+
   @HiveField(1)
   final String userId;
-  
+
   @HiveField(2)
   final String name;
-  
+
   @HiveField(3)
   final String type; // income, expense
-  
+
   @HiveField(4)
   final String icon;
-  
+
   @HiveField(5)
   final String color;
-  
+
   @HiveField(6)
   final double? budgetLimit;
-  
+
   @HiveField(7)
   final bool isCustom;
-  
+
   @HiveField(8)
   final DateTime createdAt;
 

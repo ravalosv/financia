@@ -30,13 +30,16 @@ class PaymentCardAdapter extends TypeAdapter<PaymentCard> {
       linkedAccountId: legacyShape ? null : fields[13] as String?,
       createdAt: (legacyShape ? fields[13] : fields[14]) as DateTime,
       updatedAt: (legacyShape ? fields[14] : fields[15]) as DateTime,
+      paymentGraceDays: fields[16] as int?,
+      requiresPaymentReminder: fields[17] as bool? ?? true,
+      paymentReminderDays: fields[18] as int? ?? 3,
     );
   }
 
   @override
   void write(BinaryWriter writer, PaymentCard obj) {
     writer
-      ..writeByte(16)
+      ..writeByte(19)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -68,7 +71,13 @@ class PaymentCardAdapter extends TypeAdapter<PaymentCard> {
       ..writeByte(14)
       ..write(obj.createdAt)
       ..writeByte(15)
-      ..write(obj.updatedAt);
+      ..write(obj.updatedAt)
+      ..writeByte(16)
+      ..write(obj.paymentGraceDays)
+      ..writeByte(17)
+      ..write(obj.requiresPaymentReminder)
+      ..writeByte(18)
+      ..write(obj.paymentReminderDays);
   }
 
   @override

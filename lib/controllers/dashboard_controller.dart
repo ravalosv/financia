@@ -1,18 +1,20 @@
 import 'package:get/get.dart';
+import '../models/credit_card_payment_occurrence.dart';
+import '../models/recurring_payment_model.dart';
 import '../models/transaction_model.dart';
 import '../models/budget_model.dart';
 import '../models/goal_model.dart';
-import '../database/database_service.dart';
+import '../utils/credit_card_date_utils.dart';
 import '../utils/helpers.dart';
+import 'card_controller.dart';
 import 'transaction_controller.dart';
 import 'account_controller.dart';
 import 'budget_controller.dart';
 import 'goal_controller.dart';
 import 'category_controller.dart';
+import 'recurring_payment_controller.dart';
 
 class DashboardController extends GetxController {
-  final DatabaseService _databaseService = Get.put(DatabaseService());
-
   var isLoading = false.obs;
   var selectedTimeRange = 'month'.obs; // 'week', 'month', 'quarter', 'year'
   var selectedAccountId = ''.obs;
@@ -31,6 +33,7 @@ class DashboardController extends GetxController {
   var goalsProgress = 0.0.obs;
   var transfersIn = 0.0.obs;
   var transfersOut = 0.0.obs;
+  var projectedRecurringExpense = 0.0.obs;
 
   // Charts data
   var incomeExpenseData = <Map<String, dynamic>>[].obs;
@@ -42,6 +45,10 @@ class DashboardController extends GetxController {
   var recentTransactions = <Transaction>[].obs;
   var budgetAlerts = <Budget>[].obs;
   var goalsNeedingAttention = <Goal>[].obs;
+  var upcomingRecurringPayments = <RecurringPaymentOccurrence>[].obs;
+  var activeReminderOccurrences = <RecurringPaymentOccurrence>[].obs;
+  var upcomingCardPayments = <CreditCardPaymentOccurrence>[].obs;
+  var activeCardPaymentOccurrences = <CreditCardPaymentOccurrence>[].obs;
 
   @override
   void onInit() {
@@ -49,12 +56,19 @@ class DashboardController extends GetxController {
     loadDashboardData();
     final transactionController = Get.find<TransactionController>();
     final accountController = Get.find<AccountController>();
+    final cardController = Get.find<CardController>();
     final budgetController = Get.find<BudgetController>();
     final goalController = Get.find<GoalController>();
+    final recurringPaymentController = Get.find<RecurringPaymentController>();
     ever(transactionController.transactions, (_) => loadDashboardData());
     ever(accountController.accounts, (_) => loadDashboardData());
+    ever(cardController.cards, (_) => loadDashboardData());
     ever(budgetController.budgets, (_) => loadDashboardData());
     ever(goalController.goals, (_) => loadDashboardData());
+    ever(
+      recurringPaymentController.recurringPayments,
+      (_) => loadDashboardData(),
+    );
   }
 
   Future<void> loadDashboardData() async {
@@ -79,14 +93,16 @@ class DashboardController extends GetxController {
       final accountController = Get.find<AccountController>();
       final budgetController = Get.find<BudgetController>();
       final goalController = Get.find<GoalController>();
+      final recurringPaymentController = Get.find<RecurringPaymentController>();
 
       // Calculate time range
       final dateRange = _getDateRangeForTimeRange(selectedTimeRange.value);
 
       final inScopeTransactions = transactionController.transactions.where((t) {
+        final effectiveDate = _effectiveTransactionDate(t);
         final inTimeRange =
-            t.transactionDate.isAfter(dateRange['start']!) &&
-            t.transactionDate.isBefore(
+            effectiveDate.isAfter(dateRange['start']!) &&
+            effectiveDate.isBefore(
               dateRange['end']!.add(const Duration(days: 1)),
             );
         final inAccount =
@@ -128,11 +144,18 @@ class DashboardController extends GetxController {
         }
       }
 
+      final recurringExpense = selectedAccountId.value.isEmpty
+          ? recurringPaymentController.getProjectedExpenseForMonth(
+              selectedMonth.value,
+            )
+          : 0.0;
+
       totalIncome(income);
-      totalExpense(expense);
-      netCashFlow(income - expense);
+      totalExpense(expense + recurringExpense);
+      netCashFlow(income - expense - recurringExpense);
       transfersIn(tIn);
       transfersOut(tOut);
+      projectedRecurringExpense(recurringExpense);
 
       // Calculate total balance
       if (selectedAccountId.value.isEmpty) {
@@ -187,8 +210,9 @@ class DashboardController extends GetxController {
       final Map<DateTime, Map<String, double>> dailyData = {};
 
       for (final transaction in transactionController.transactions) {
-        if (transaction.transactionDate.isAfter(dateRange['start']!) &&
-            transaction.transactionDate.isBefore(
+        final effectiveDate = _effectiveTransactionDate(transaction);
+        if (effectiveDate.isAfter(dateRange['start']!) &&
+            effectiveDate.isBefore(
               dateRange['end']!.add(const Duration(days: 1)),
             )) {
           if (transaction.categoryId == 'transfer_in' ||
@@ -196,9 +220,9 @@ class DashboardController extends GetxController {
             continue;
           }
           final date = DateTime(
-            transaction.transactionDate.year,
-            transaction.transactionDate.month,
-            transaction.transactionDate.day,
+            effectiveDate.year,
+            effectiveDate.month,
+            effectiveDate.day,
           );
 
           dailyData.putIfAbsent(date, () => {'income': 0.0, 'expense': 0.0});
@@ -246,9 +270,10 @@ class DashboardController extends GetxController {
       final Map<String, double> categoryExpenses = {};
 
       for (final transaction in transactionController.transactions) {
+        final effectiveDate = _effectiveTransactionDate(transaction);
         if (transaction.type == 'expense' &&
-            transaction.transactionDate.isAfter(dateRange['start']!) &&
-            transaction.transactionDate.isBefore(
+            effectiveDate.isAfter(dateRange['start']!) &&
+            effectiveDate.isBefore(
               dateRange['end']!.add(const Duration(days: 1)),
             )) {
           if (transaction.categoryId == 'transfer_out') {
@@ -334,12 +359,11 @@ class DashboardController extends GetxController {
         double expense = 0.0;
 
         for (final transaction in transactionController.transactions) {
-          if (transaction.transactionDate.isAfter(
+          final effectiveDate = _effectiveTransactionDate(transaction);
+          if (effectiveDate.isAfter(
                 monthStart.subtract(const Duration(days: 1)),
               ) &&
-              transaction.transactionDate.isBefore(
-                monthEnd.add(const Duration(days: 1)),
-              )) {
+              effectiveDate.isBefore(monthEnd.add(const Duration(days: 1)))) {
             if (transaction.categoryId == 'transfer_in' ||
                 transaction.categoryId == 'transfer_out') {
               continue;
@@ -370,10 +394,20 @@ class DashboardController extends GetxController {
   Future<void> _loadRecentData() async {
     try {
       final transactionController = Get.find<TransactionController>();
+      final recurringPaymentController = Get.find<RecurringPaymentController>();
 
       // Get recent transactions
       final recent = transactionController.getRecentTransactions(limit: 10);
       recentTransactions.assignAll(recent);
+      upcomingRecurringPayments.assignAll(
+        recurringPaymentController.getUpcomingPayments(
+          days: 30,
+          includeOverdue: true,
+        ),
+      );
+      upcomingCardPayments.assignAll(
+        _getUpcomingCardPayments(days: 30, includeOverdue: true),
+      );
     } catch (e) {
       throw Exception('Failed to load recent data: $e');
     }
@@ -382,7 +416,7 @@ class DashboardController extends GetxController {
   Future<void> _loadAlerts() async {
     try {
       final budgetController = Get.find<BudgetController>();
-      final goalController = Get.find<GoalController>();
+      final recurringPaymentController = Get.find<RecurringPaymentController>();
 
       // Get budget alerts
       final budgetAlertsList = budgetController.getBudgetAlerts();
@@ -390,10 +424,148 @@ class DashboardController extends GetxController {
 
       // Get goals needing attention
       goalsNeedingAttention.assignAll([]);
+      activeReminderOccurrences.assignAll(
+        recurringPaymentController.getActiveReminderOccurrences(),
+      );
+      activeCardPaymentOccurrences.assignAll(
+        _getActiveCardPaymentOccurrences(),
+      );
     } catch (e) {
       throw Exception('Failed to load alerts: $e');
     }
   }
+
+  DateTime _effectiveTransactionDate(Transaction transaction) {
+    final accountController = Get.find<AccountController>();
+    final cardController = Get.find<CardController>();
+    final account = accountController.getAccountById(transaction.accountId);
+    if (account == null ||
+        account.type != 'credit' ||
+        transaction.type != 'expense') {
+      return transaction.transactionDate;
+    }
+    if (transaction.categoryId == 'transfer_out') {
+      return transaction.transactionDate;
+    }
+
+    final config = cardController.getPaymentConfigForAccount(
+      transaction.accountId,
+      fallbackStatementDay: account.creditCutoffDay,
+    );
+    if (config == null || !config.hasDueConfig) {
+      return transaction.transactionDate;
+    }
+
+    final purchaseDate =
+        transaction.purchaseDate ?? transaction.transactionDate;
+    final cycleOffset = transaction.isInstallmentPlan
+        ? ((transaction.installmentIndex ?? 1) - 1)
+        : 0;
+    return CreditCardDateUtils.dueDateForPurchase(
+      purchaseDate: purchaseDate,
+      statementDay: config.statementDay,
+      cycleOffset: cycleOffset,
+      paymentGraceDays: config.paymentGraceDays,
+      legacyPaymentDay: config.legacyPaymentDay,
+    );
+  }
+
+  List<CreditCardPaymentOccurrence> _getUpcomingCardPayments({
+    required int days,
+    required bool includeOverdue,
+    DateTime? from,
+  }) {
+    final now = _dateOnly(from ?? DateTime.now());
+    final horizon = now.add(Duration(days: days));
+    return _buildCardPaymentOccurrences().where((occurrence) {
+      if (!includeOverdue && occurrence.dueDate.isBefore(now)) {
+        return false;
+      }
+      return !occurrence.dueDate.isAfter(horizon);
+    }).toList()..sort((a, b) {
+      final aOverdue = a.dueDate.isBefore(now);
+      final bOverdue = b.dueDate.isBefore(now);
+      if (aOverdue != bOverdue) {
+        return aOverdue ? -1 : 1;
+      }
+      if (aOverdue && bOverdue) {
+        return b.dueDate.compareTo(a.dueDate);
+      }
+      return a.dueDate.compareTo(b.dueDate);
+    });
+  }
+
+  List<CreditCardPaymentOccurrence> _getActiveCardPaymentOccurrences({
+    DateTime? now,
+  }) {
+    final current = _dateOnly(now ?? DateTime.now());
+    final occurrences = _buildCardPaymentOccurrences().where(
+      (occurrence) => occurrence.card.requiresPaymentReminder
+          ? occurrence.reminderIsActiveOn(current)
+          : false,
+    );
+    final result = occurrences.toList()
+      ..sort((a, b) => a.dueDate.compareTo(b.dueDate));
+    return result;
+  }
+
+  List<CreditCardPaymentOccurrence> _buildCardPaymentOccurrences() {
+    final transactionController = Get.find<TransactionController>();
+    final accountController = Get.find<AccountController>();
+    final cardController = Get.find<CardController>();
+    final grouped = <String, CreditCardPaymentOccurrence>{};
+
+    for (final transaction in transactionController.transactions) {
+      final account = accountController.getAccountById(transaction.accountId);
+      if (account == null ||
+          account.type != 'credit' ||
+          transaction.type != 'expense') {
+        continue;
+      }
+      if (transaction.categoryId == 'transfer_out') {
+        continue;
+      }
+
+      final config = cardController.getPaymentConfigForAccount(
+        transaction.accountId,
+        fallbackStatementDay: account.creditCutoffDay,
+      );
+      if (config == null || !config.hasDueConfig || config.cardId == null) {
+        continue;
+      }
+
+      final card = cardController.getCardById(config.cardId!);
+      if (card == null || card.cardType != 'credit') {
+        continue;
+      }
+
+      final dueDate = _dateOnly(_effectiveTransactionDate(transaction));
+      final reminderStartDate = CreditCardDateUtils.reminderStartDate(
+        dueDate: dueDate,
+        reminderDays: card.paymentReminderDays,
+      );
+      final monthKey =
+          '${dueDate.year}-${dueDate.month.toString().padLeft(2, '0')}-${dueDate.day.toString().padLeft(2, '0')}';
+      final key = '${transaction.accountId}|$monthKey';
+      final existing = grouped[key];
+
+      grouped[key] = CreditCardPaymentOccurrence(
+        card: card,
+        accountId: transaction.accountId,
+        accountName: account.name,
+        currency: account.currency,
+        dueDate: dueDate,
+        reminderStartDate: reminderStartDate,
+        amount: (existing?.amount ?? 0) + transaction.amount,
+        monthKey: monthKey,
+      );
+    }
+
+    return grouped.values.where((item) => item.amount > 0).toList();
+  }
+
+  DateTime _dateOnly(DateTime date) =>
+      DateTime(date.year, date.month, date.day);
 
   Map<String, DateTime> _getDateRangeForTimeRange(String timeRange) {
     final now = DateTime.now();
@@ -547,7 +719,7 @@ class DashboardController extends GetxController {
       final inAccount =
           selectedAccountId.value.isEmpty ||
           t.accountId == selectedAccountId.value;
-      if (inAccount && t.transactionDate.isBefore(start)) {
+      if (inAccount && _effectiveTransactionDate(t).isBefore(start)) {
         if (selectedAccountId.value.isEmpty) {
           final acc = accountController.getAccountById(t.accountId);
           if (acc != null && acc.type == 'credit') {
@@ -582,8 +754,9 @@ class DashboardController extends GetxController {
       final inAccount =
           selectedAccountId.value.isEmpty ||
           t.accountId == selectedAccountId.value;
+      final effectiveDate = _effectiveTransactionDate(t);
       final inRange =
-          !t.transactionDate.isBefore(start) && !t.transactionDate.isAfter(end);
+          !effectiveDate.isBefore(start) && !effectiveDate.isAfter(end);
       if (inAccount && inRange) {
         if (selectedAccountId.value.isEmpty) {
           final acc = accountController.getAccountById(t.accountId);

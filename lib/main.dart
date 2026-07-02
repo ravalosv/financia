@@ -4,12 +4,14 @@ import 'database/database_service.dart';
 import 'theme/app_theme.dart';
 import 'routes/app_routes.dart';
 import 'controllers/controllers.dart';
+import 'services/local_notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Initialize database
   await DatabaseService.initialize();
+  await LocalNotificationService.initialize();
 
   // Initialize controllers
   Get.put(DatabaseService());
@@ -21,13 +23,31 @@ void main() async {
   Get.put(BudgetController());
   Get.put(GoalController());
   Get.put(CardController());
+  Get.put(RecurringPaymentController());
   Get.put(DashboardController());
 
   runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  bool _requestedNotificationPermissions = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_requestedNotificationPermissions) return;
+    _requestedNotificationPermissions = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await LocalNotificationService.requestPermissions();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {

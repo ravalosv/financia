@@ -6,28 +6,28 @@ part 'budget_model.g.dart';
 class Budget {
   @HiveField(0)
   final String id;
-  
+
   @HiveField(1)
   final String userId;
-  
+
   @HiveField(2)
   final String categoryId;
-  
+
   @HiveField(3)
   final double amount;
-  
+
   @HiveField(4)
   final String monthYear; // Format: YYYY-MM
-  
+
   @HiveField(5)
   final double spent;
-  
+
   @HiveField(6)
   final double remaining;
-  
+
   @HiveField(7)
   final double rolloverFromPrevious;
-  
+
   @HiveField(8)
   final DateTime createdAt;
 

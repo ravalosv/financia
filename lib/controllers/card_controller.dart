@@ -1,8 +1,10 @@
 import 'package:get/get.dart';
 
+import 'account_controller.dart';
 import '../database/database_service.dart';
 import '../models/payment_card_model.dart';
 import '../security/card_security_service.dart';
+import '../utils/credit_card_date_utils.dart';
 import '../utils/helpers.dart';
 
 class CardController extends GetxController {
@@ -47,6 +49,9 @@ class CardController extends GetxController {
     String? pin,
     int? statementDay,
     int? paymentDay,
+    int? paymentGraceDays,
+    bool requiresPaymentReminder = true,
+    int paymentReminderDays = 3,
     String? linkedAccountId,
   }) async {
     try {
@@ -55,7 +60,10 @@ class CardController extends GetxController {
       if (normalizedNumber.length != 16) {
         throw Exception('El numero de tarjeta debe tener 16 digitos');
       }
-      _validateLinkedAccount(linkedAccountId: linkedAccountId);
+      _validateLinkedAccount(
+        linkedAccountId: linkedAccountId,
+        cardType: cardType,
+      );
       final encryptedNumber = await _securityService.encryptText(
         normalizedNumber,
       );
@@ -79,6 +87,9 @@ class CardController extends GetxController {
         statementDay: statementDay,
         paymentDay: paymentDay,
         linkedAccountId: linkedAccountId,
+        paymentGraceDays: paymentGraceDays,
+        requiresPaymentReminder: requiresPaymentReminder,
+        paymentReminderDays: paymentReminderDays,
         createdAt: now,
         updatedAt: now,
       );
@@ -104,6 +115,9 @@ class CardController extends GetxController {
     String? pin,
     int? statementDay,
     int? paymentDay,
+    int? paymentGraceDays,
+    bool requiresPaymentReminder = true,
+    int paymentReminderDays = 3,
     String? linkedAccountId,
   }) async {
     try {
@@ -114,6 +128,7 @@ class CardController extends GetxController {
       }
       _validateLinkedAccount(
         linkedAccountId: linkedAccountId,
+        cardType: cardType,
         excludingCardId: existing.id,
       );
       final encryptedNumber = await _securityService.encryptText(
@@ -137,10 +152,14 @@ class CardController extends GetxController {
         statementDay: statementDay,
         paymentDay: paymentDay,
         linkedAccountId: linkedAccountId,
+        paymentGraceDays: paymentGraceDays,
+        requiresPaymentReminder: requiresPaymentReminder,
+        paymentReminderDays: paymentReminderDays,
         clearLinkedAccountId:
             linkedAccountId == null || linkedAccountId.isEmpty,
         clearStatementDay: cardType != 'credit',
         clearPaymentDay: cardType != 'credit',
+        clearPaymentGraceDays: cardType != 'credit',
         updatedAt: DateTime.now(),
       );
       await _databaseService.updateCard(updated);
@@ -199,7 +218,32 @@ class CardController extends GetxController {
     }
   }
 
-  List<PaymentCard> getAvailableCardsForAccount(String? accountId) {
+  CreditCardPaymentConfig? getPaymentConfigForAccount(
+    String accountId, {
+    int? fallbackStatementDay,
+  }) {
+    final card = getCardByLinkedAccountId(accountId);
+    final statementDay = (card?.cardType == 'credit')
+        ? (card?.statementDay ?? fallbackStatementDay)
+        : fallbackStatementDay;
+    if (statementDay == null) return null;
+
+    return CreditCardPaymentConfig(
+      cardId: card?.id,
+      cardName: card?.name ?? 'Tarjeta de credito',
+      accountId: accountId,
+      statementDay: statementDay,
+      paymentGraceDays: card?.paymentGraceDays,
+      legacyPaymentDay: card?.paymentDay,
+      requiresReminder: card?.requiresPaymentReminder ?? false,
+      reminderDays: card?.paymentReminderDays ?? 3,
+    );
+  }
+
+  List<PaymentCard> getAvailableCardsForAccount(
+    String? accountId, {
+    String? accountType,
+  }) {
     return cards
         .where(
           (card) =>
@@ -207,6 +251,11 @@ class CardController extends GetxController {
               card.linkedAccountId!.isEmpty ||
               card.linkedAccountId == accountId,
         )
+        .where((card) {
+          if (accountType == null || accountType.isEmpty) return true;
+          if (accountType == 'credit') return card.cardType == 'credit';
+          return card.cardType != 'credit';
+        })
         .toList()
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
   }
@@ -225,6 +274,22 @@ class CardController extends GetxController {
 
       if (cardId != null && cardId.isNotEmpty && selectedCard == null) {
         throw Exception('La tarjeta seleccionada no existe');
+      }
+
+      final account = Get.find<AccountController>().getAccountById(accountId);
+      if (account == null) {
+        throw Exception('La cuenta seleccionada no existe');
+      }
+      if (selectedCard != null) {
+        final expectsCredit = account.type == 'credit';
+        final isCreditCard = selectedCard.cardType == 'credit';
+        if (expectsCredit != isCreditCard) {
+          throw Exception(
+            expectsCredit
+                ? 'Solo puedes ligar tarjetas de credito a cuentas de credito'
+                : 'No puedes ligar una tarjeta de credito a una cuenta que no es de credito',
+          );
+        }
       }
 
       if (selectedCard != null &&
@@ -273,9 +338,27 @@ class CardController extends GetxController {
 
   void _validateLinkedAccount({
     String? linkedAccountId,
+    String? cardType,
     String? excludingCardId,
   }) {
     if (linkedAccountId == null || linkedAccountId.isEmpty) return;
+
+    final account = Get.find<AccountController>().getAccountById(
+      linkedAccountId,
+    );
+    if (account == null) {
+      throw Exception('La cuenta seleccionada no existe');
+    }
+    if (cardType == 'credit' && account.type != 'credit') {
+      throw Exception(
+        'Las tarjetas de credito solo se pueden ligar a cuentas de credito',
+      );
+    }
+    if (cardType != 'credit' && account.type == 'credit') {
+      throw Exception(
+        'Las tarjetas que no son de credito no se pueden ligar a cuentas de credito',
+      );
+    }
 
     final duplicated = cards.any(
       (card) =>

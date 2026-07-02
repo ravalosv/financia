@@ -1,6 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../controllers/auth_controller.dart';
+import '../controllers/account_controller.dart';
+import '../controllers/budget_controller.dart';
+import '../controllers/card_controller.dart';
+import '../controllers/category_controller.dart';
+import '../controllers/dashboard_controller.dart';
+import '../controllers/goal_controller.dart';
+import '../controllers/recurring_payment_controller.dart';
+import '../controllers/transaction_controller.dart';
 import '../theme/app_theme.dart';
 import '../database/database_service.dart';
 import 'package:file_picker/file_picker.dart';
@@ -18,6 +26,14 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final auth = Get.find<AuthController>();
+  final accounts = Get.find<AccountController>();
+  final categories = Get.find<CategoryController>();
+  final transactions = Get.find<TransactionController>();
+  final budgets = Get.find<BudgetController>();
+  final goals = Get.find<GoalController>();
+  final cards = Get.find<CardController>();
+  final recurring = Get.find<RecurringPaymentController>();
+  final dashboard = Get.find<DashboardController>();
 
   Future<void> _toggleBiometric(bool enable) async {
     if (auth.currentUser.value == null) {
@@ -86,6 +102,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _importData() async {
     try {
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Importar datos'),
+          content: const Text(
+            'La importación sustituirá todos los datos actuales del dispositivo por los del archivo seleccionado. Esta acción no se puede deshacer. ¿Deseas continuar?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancelar'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Sustituir'),
+            ),
+          ],
+        ),
+      );
+      if (confirm != true) return;
+
       final picked = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: const ['json'],
@@ -99,11 +136,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final file = File(picked.files.single.path!);
       final content = await file.readAsString();
       final map = jsonDecode(content) as Map<String, dynamic>;
-      await DatabaseService().importAllData(map);
+      await DatabaseService().importAllData(map, replaceExisting: true);
+      await _reloadImportedData();
       Get.snackbar('Importación', 'Datos importados correctamente');
     } catch (e) {
       Get.snackbar('Error', 'No se pudo importar: $e');
     }
+  }
+
+  Future<void> _reloadImportedData() async {
+    await auth.checkAuthStatus();
+    if (auth.currentUser.value != null) {
+      auth.isAuthenticated.value = true;
+    }
+    await categories.loadCategories();
+    await accounts.loadAccounts();
+    await transactions.loadTransactions();
+    await budgets.loadBudgets();
+    await goals.loadGoals();
+    await cards.loadCards();
+    await recurring.loadRecurringPayments();
+    await dashboard.loadDashboardData();
   }
 
   @override

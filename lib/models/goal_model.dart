@@ -6,28 +6,28 @@ part 'goal_model.g.dart';
 class Goal {
   @HiveField(0)
   final String id;
-  
+
   @HiveField(1)
   final String userId;
-  
+
   @HiveField(2)
   final String name;
-  
+
   @HiveField(3)
   final double targetAmount;
-  
+
   @HiveField(4)
   final double currentAmount;
-  
+
   @HiveField(5)
   final DateTime? targetDate;
-  
+
   @HiveField(6)
   final String? category;
-  
+
   @HiveField(7)
   final bool isActive;
-  
+
   @HiveField(8)
   final DateTime createdAt;
 
@@ -95,7 +95,9 @@ class Goal {
       name: json['name'],
       targetAmount: json['target_amount'].toDouble(),
       currentAmount: json['current_amount']?.toDouble() ?? 0.0,
-      targetDate: json['target_date'] != null ? DateTime.parse(json['target_date']) : null,
+      targetDate: json['target_date'] != null
+          ? DateTime.parse(json['target_date'])
+          : null,
       category: json['category'],
       isActive: json['is_active'] ?? true,
       createdAt: DateTime.parse(json['created_at']),

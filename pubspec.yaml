@@ -62,6 +62,9 @@ dependencies:
   
   # File handling
   path_provider: ^2.1.1
+  flutter_local_notifications: ^19.4.1
+  flutter_timezone: ^4.1.1
+  timezone: ^0.10.1
   
   # Biometric authentication
   local_auth: ^2.1.6
@@ -69,6 +72,7 @@ dependencies:
   # Payment processing
   in_app_purchase: ^3.1.5
   file_picker: ^10.3.7
+  share_plus: ^10.0.2
 
 dev_dependencies:
   flutter_test:

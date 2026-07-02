@@ -52,6 +52,15 @@ class PaymentCard {
   @HiveField(15)
   final DateTime updatedAt;
 
+  @HiveField(16)
+  final int? paymentGraceDays;
+
+  @HiveField(17)
+  final bool requiresPaymentReminder;
+
+  @HiveField(18)
+  final int paymentReminderDays;
+
   const PaymentCard({
     required this.id,
     required this.userId,
@@ -67,6 +76,9 @@ class PaymentCard {
     this.statementDay,
     this.paymentDay,
     this.linkedAccountId,
+    this.paymentGraceDays,
+    this.requiresPaymentReminder = true,
+    this.paymentReminderDays = 3,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -90,6 +102,10 @@ class PaymentCard {
     bool clearPaymentDay = false,
     String? linkedAccountId,
     bool clearLinkedAccountId = false,
+    int? paymentGraceDays,
+    bool clearPaymentGraceDays = false,
+    bool? requiresPaymentReminder,
+    int? paymentReminderDays,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -112,6 +128,12 @@ class PaymentCard {
       linkedAccountId: clearLinkedAccountId
           ? null
           : (linkedAccountId ?? this.linkedAccountId),
+      paymentGraceDays: clearPaymentGraceDays
+          ? null
+          : (paymentGraceDays ?? this.paymentGraceDays),
+      requiresPaymentReminder:
+          requiresPaymentReminder ?? this.requiresPaymentReminder,
+      paymentReminderDays: paymentReminderDays ?? this.paymentReminderDays,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -138,6 +160,9 @@ class PaymentCard {
       'statement_day': statementDay,
       'payment_day': paymentDay,
       'linked_account_id': linkedAccountId,
+      'payment_grace_days': paymentGraceDays,
+      'requires_payment_reminder': requiresPaymentReminder,
+      'payment_reminder_days': paymentReminderDays,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
     };
@@ -159,6 +184,11 @@ class PaymentCard {
       statementDay: (json['statement_day'] as num?)?.toInt(),
       paymentDay: (json['payment_day'] as num?)?.toInt(),
       linkedAccountId: json['linked_account_id'] as String?,
+      paymentGraceDays: (json['payment_grace_days'] as num?)?.toInt(),
+      requiresPaymentReminder:
+          json['requires_payment_reminder'] as bool? ?? true,
+      paymentReminderDays:
+          (json['payment_reminder_days'] as num?)?.toInt() ?? 3,
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
     );

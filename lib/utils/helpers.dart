@@ -3,8 +3,8 @@ import 'package:intl/intl.dart';
 
 class Helpers {
   static String generateId() {
-    return DateTime.now().millisecondsSinceEpoch.toString() + 
-           Random().nextInt(9999).toString().padLeft(4, '0');
+    return DateTime.now().millisecondsSinceEpoch.toString() +
+        Random().nextInt(9999).toString().padLeft(4, '0');
   }
 
   static String formatCurrency(double amount, String currency) {
@@ -43,12 +43,12 @@ class Helpers {
   static String getMonthYearFromString(String monthYear) {
     final parts = monthYear.split('-');
     if (parts.length != 2) return monthYear;
-    
+
     final year = int.tryParse(parts[0]) ?? 0;
     final month = int.tryParse(parts[1]) ?? 0;
-    
+
     if (year == 0 || month == 0 || month < 1 || month > 12) return monthYear;
-    
+
     final date = DateTime(year, month);
     return DateFormat('MMMM yyyy').format(date);
   }

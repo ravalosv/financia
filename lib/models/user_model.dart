@@ -6,22 +6,22 @@ part 'user_model.g.dart';
 class User {
   @HiveField(0)
   final String id;
-  
+
   @HiveField(1)
   final String email;
-  
+
   @HiveField(2)
   final String name;
-  
+
   @HiveField(3)
   final String currency;
-  
+
   @HiveField(4)
   final bool biometricEnabled;
-  
+
   @HiveField(5)
   final DateTime createdAt;
-  
+
   @HiveField(6)
   final DateTime updatedAt;
 
@@ -30,7 +30,7 @@ class User {
     required this.email,
     required this.name,
     this.currency = 'USD',
-    this.biometricEnabled = false,
+    this.biometricEnabled = true,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -73,7 +73,7 @@ class User {
       email: json['email'],
       name: json['name'],
       currency: json['currency'] ?? 'USD',
-      biometricEnabled: json['biometric_enabled'] ?? false,
+      biometricEnabled: json['biometric_enabled'] ?? true,
       createdAt: DateTime.parse(json['created_at']),
       updatedAt: DateTime.parse(json['updated_at']),
     );

@@ -47,11 +47,13 @@ class _SplashScreenState extends State<SplashScreen>
     });
   }
 
-  void _navigateToNextScreen() {
+  Future<void> _navigateToNextScreen() async {
     final AuthController authController = Get.find<AuthController>();
 
     if (authController.currentUser.value != null) {
-      if (authController.isAuthenticated.value) {
+      final allowed = await authController.authenticateOnAppEntry();
+      if (!mounted) return;
+      if (allowed) {
         Get.offAllNamed('/dashboard');
       } else {
         Get.offAllNamed('/login');

@@ -85,14 +85,18 @@ class _CardsScreenState extends State<CardsScreen> {
     final statementDayController = TextEditingController(
       text: initial?.statementDay?.toString() ?? '',
     );
-    final paymentDayController = TextEditingController(
-      text: initial?.paymentDay?.toString() ?? '',
+    final paymentGraceDaysController = TextEditingController(
+      text: initial?.paymentGraceDays?.toString() ?? '',
+    );
+    final paymentReminderDaysController = TextEditingController(
+      text: initial?.paymentReminderDays.toString() ?? '3',
     );
 
     final formKey = GlobalKey<FormState>();
     String cardType = initial?.cardType ?? 'debit';
     String? linkedAccountId = initial?.linkedAccountId;
     bool isVirtual = initial?.isVirtual ?? false;
+    bool requiresPaymentReminder = initial?.requiresPaymentReminder ?? true;
 
     if (!mounted) return;
 
@@ -102,14 +106,28 @@ class _CardsScreenState extends State<CardsScreen> {
       builder: (ctx) {
         return StatefulBuilder(
           builder: (ctx, setModalState) {
-            final availableAccounts = accountController.accounts.where((
-              account,
-            ) {
+            final availableAccountsById = <String, dynamic>{};
+            for (final account in accountController.accounts) {
+              final matchesType = cardType == 'credit'
+                  ? account.type == 'credit'
+                  : account.type != 'credit';
+              if (!matchesType) continue;
               final linkedCard = cardController.getCardByLinkedAccountId(
                 account.id,
               );
-              return linkedCard == null || linkedCard.id == initial?.id;
-            }).toList();
+              if (linkedCard == null || linkedCard.id == initial?.id) {
+                availableAccountsById.putIfAbsent(account.id, () => account);
+              }
+            }
+            final availableAccounts = availableAccountsById.values.toList();
+            final effectiveLinkedAccountId =
+                linkedAccountId != null &&
+                    availableAccounts.any(
+                      (account) => account.id == linkedAccountId,
+                    )
+                ? linkedAccountId
+                : null;
+            linkedAccountId = effectiveLinkedAccountId;
             return Padding(
               padding: EdgeInsets.only(
                 left: 16,
@@ -165,7 +183,7 @@ class _CardsScreenState extends State<CardsScreen> {
                       ),
                       const SizedBox(height: 12),
                       DropdownButtonFormField<String?>(
-                        initialValue: linkedAccountId,
+                        initialValue: effectiveLinkedAccountId,
                         isExpanded: true,
                         decoration: const InputDecoration(
                           labelText: 'Cuenta ligada',
@@ -331,17 +349,19 @@ class _CardsScreenState extends State<CardsScreen> {
                             const SizedBox(width: 12),
                             Expanded(
                               child: TextFormField(
-                                controller: paymentDayController,
+                                controller: paymentGraceDaysController,
                                 keyboardType: TextInputType.number,
                                 decoration: const InputDecoration(
-                                  labelText: 'Día de pago',
-                                  helperText: 'Día del mes',
+                                  labelText: 'Días para pagar',
+                                  helperText: 'Después de fecha de corte',
                                 ),
                                 validator: (value) {
-                                  final day = int.tryParse(value ?? '');
+                                  final days = int.tryParse(value ?? '');
                                   if (cardType == 'credit' &&
-                                      (day == null || day < 1 || day > 31)) {
-                                    return 'Dia invalido';
+                                      (days == null ||
+                                          days < 0 ||
+                                          days > 120)) {
+                                    return 'Valor invalido';
                                   }
                                   return null;
                                 },
@@ -349,6 +369,34 @@ class _CardsScreenState extends State<CardsScreen> {
                             ),
                           ],
                         ),
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('Alerta antes del vencimiento'),
+                          value: requiresPaymentReminder,
+                          onChanged: (value) {
+                            setModalState(() {
+                              requiresPaymentReminder = value;
+                            });
+                          },
+                        ),
+                        if (requiresPaymentReminder)
+                          TextFormField(
+                            controller: paymentReminderDaysController,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Días de alerta',
+                              helperText: 'Antes de fecha límite',
+                            ),
+                            validator: (value) {
+                              final days = int.tryParse(value ?? '');
+                              if (cardType == 'credit' &&
+                                  requiresPaymentReminder &&
+                                  (days == null || days < 0 || days > 31)) {
+                                return 'Valor invalido';
+                              }
+                              return null;
+                            },
+                          ),
                       ],
                       const SizedBox(height: 16),
                       Obx(
@@ -373,11 +421,25 @@ class _CardsScreenState extends State<CardsScreen> {
                                           statementDayController.text.trim(),
                                         )
                                       : null;
-                                  final paymentDay = cardType == 'credit'
+                                  final paymentGraceDays = cardType == 'credit'
                                       ? int.parse(
-                                          paymentDayController.text.trim(),
+                                          paymentGraceDaysController.text
+                                              .trim(),
                                         )
                                       : null;
+                                  final paymentReminderDays =
+                                      cardType == 'credit'
+                                      ? (requiresPaymentReminder
+                                            ? int.parse(
+                                                paymentReminderDaysController
+                                                    .text
+                                                    .trim(),
+                                              )
+                                            : 0)
+                                      : 0;
+                                  final effectivePaymentReminder =
+                                      cardType == 'credit' &&
+                                      requiresPaymentReminder;
 
                                   if (initial == null) {
                                     await cardController.createCard(
@@ -393,7 +455,10 @@ class _CardsScreenState extends State<CardsScreen> {
                                           ? null
                                           : pinController.text.trim(),
                                       statementDay: statementDay,
-                                      paymentDay: paymentDay,
+                                      paymentGraceDays: paymentGraceDays,
+                                      requiresPaymentReminder:
+                                          effectivePaymentReminder,
+                                      paymentReminderDays: paymentReminderDays,
                                       linkedAccountId: linkedAccountId,
                                     );
                                   } else {
@@ -410,7 +475,10 @@ class _CardsScreenState extends State<CardsScreen> {
                                           ? null
                                           : pinController.text.trim(),
                                       statementDay: statementDay,
-                                      paymentDay: paymentDay,
+                                      paymentGraceDays: paymentGraceDays,
+                                      requiresPaymentReminder:
+                                          effectivePaymentReminder,
+                                      paymentReminderDays: paymentReminderDays,
                                       linkedAccountId: linkedAccountId,
                                     );
                                   }
@@ -578,8 +646,18 @@ class _CardsScreenState extends State<CardsScreen> {
                         value: 'Día ${card.statementDay ?? '-'}',
                       ),
                       _DetailRow(
-                        label: 'Día de pago',
-                        value: 'Día ${card.paymentDay ?? '-'}',
+                        label: 'Días para pagar',
+                        value: card.paymentGraceDays != null
+                            ? '${card.paymentGraceDays} día(s)'
+                            : card.paymentDay != null
+                            ? 'Legado: día ${card.paymentDay}'
+                            : '-',
+                      ),
+                      _DetailRow(
+                        label: 'Alerta',
+                        value: card.requiresPaymentReminder
+                            ? '${card.paymentReminderDays} día(s) antes'
+                            : 'No',
                       ),
                     ],
                     const SizedBox(height: 8),

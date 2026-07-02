@@ -1,12 +1,21 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+import '../controllers/dashboard_controller.dart';
 import '../controllers/transaction_controller.dart';
 import '../controllers/account_controller.dart';
 import '../controllers/category_controller.dart';
 import '../controllers/auth_controller.dart';
 import '../controllers/card_controller.dart';
+import '../controllers/recurring_payment_controller.dart';
 import '../models/models.dart';
 import '../theme/app_theme.dart';
+import '../utils/credit_card_date_utils.dart';
 import '../utils/helpers.dart';
 
 class TransactionsScreen extends StatefulWidget {
@@ -28,6 +37,8 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   String _filterType = 'all';
   DateTime _filterStart = DateTime.now().subtract(const Duration(days: 30));
   DateTime _filterEnd = DateTime.now();
+  bool _openedRecurringPrefill = false;
+  bool _exportingCsv = false;
 
   String _formatShortDate(DateTime d) {
     final dd = d.day.toString().padLeft(2, '0');
@@ -39,29 +50,175 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   bool _sameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
 
-  DateTime _addMonthsKeepingDay(DateTime date, int monthsToAdd) {
-    final totalMonths = (date.year * 12) + date.month - 1 + monthsToAdd;
-    final year = totalMonths ~/ 12;
-    final month = (totalMonths % 12) + 1;
-    final day = date.day.clamp(1, _daysInMonth(year, month));
-    return DateTime(
-      year,
-      month,
-      day,
-      date.hour,
-      date.minute,
-      date.second,
-      date.millisecond,
-      date.microsecond,
-    );
+  DateTime _dateOnly(DateTime date) =>
+      DateTime(date.year, date.month, date.day);
+
+  Set<String> _selectedAccountIds() {
+    if (_filterAccount != null && _filterAccount!.isNotEmpty) {
+      return {_filterAccount!};
+    }
+    return accounts.accounts
+        .where((account) => account.type != 'credit')
+        .map((account) => account.id)
+        .toSet();
   }
 
-  int _daysInMonth(int year, int month) => DateTime(year, month + 1, 0).day;
+  double _signedAmountForSummary(
+    Transaction transaction,
+    Set<String> accountIds,
+  ) {
+    final account = accounts.getAccountById(transaction.accountId);
+    final useBaseCurrency =
+        accountIds.length != 1 ||
+        (account != null && account.currency != auth.currentUserCurrency);
+    final amount = useBaseCurrency
+        ? transaction.amount * transaction.exchangeRate
+        : transaction.amount;
+    return transaction.type == 'income' ? amount : -amount;
+  }
+
+  double _balanceAtDate(
+    Set<String> accountIds,
+    DateTime date, {
+    required bool inclusive,
+  }) {
+    final targetDate = _dateOnly(date);
+    return tx.transactions
+        .where((transaction) {
+          if (!accountIds.contains(transaction.accountId)) return false;
+          final transactionDate = _dateOnly(transaction.transactionDate);
+          return inclusive
+              ? !transactionDate.isAfter(targetDate)
+              : transactionDate.isBefore(targetDate);
+        })
+        .fold(
+          0.0,
+          (sum, transaction) =>
+              sum + _signedAmountForSummary(transaction, accountIds),
+        );
+  }
+
+  double _periodNetChange(
+    Set<String> accountIds,
+    DateTime start,
+    DateTime end,
+  ) {
+    final startDate = _dateOnly(start);
+    final endDate = _dateOnly(end);
+    return tx.transactions
+        .where((transaction) {
+          if (!accountIds.contains(transaction.accountId)) return false;
+          final transactionDate = _dateOnly(transaction.transactionDate);
+          return !transactionDate.isBefore(startDate) &&
+              !transactionDate.isAfter(endDate);
+        })
+        .fold(
+          0.0,
+          (sum, transaction) =>
+              sum + _signedAmountForSummary(transaction, accountIds),
+        );
+  }
+
+  String _formatCsvDate(DateTime date) {
+    final yyyy = date.year.toString().padLeft(4, '0');
+    final mm = date.month.toString().padLeft(2, '0');
+    final dd = date.day.toString().padLeft(2, '0');
+    return '$yyyy-$mm-$dd';
+  }
+
+  String _csvField(Object? value) {
+    final text = (value ?? '').toString().replaceAll('"', '""');
+    return '"$text"';
+  }
+
+  Future<void> _exportTransactionsCsv() async {
+    if (_exportingCsv) return;
+
+    final filtered = tx.filteredTransactions.toList()
+      ..sort((a, b) {
+        final byDate = b.transactionDate.compareTo(a.transactionDate);
+        if (byDate != 0) return byDate;
+        return b.createdAt.compareTo(a.createdAt);
+      });
+
+    if (filtered.isEmpty) {
+      Get.snackbar(
+        'Sin datos',
+        'No hay transacciones para exportar con los filtros actuales',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+      return;
+    }
+
+    setState(() => _exportingCsv = true);
+    try {
+      final buffer = StringBuffer()
+        ..writeln(
+          'fecha_contable,cuenta,categoria,tipo,monto,moneda,descripcion,comercio,recurrencia,fecha_compra,fecha_registro',
+        );
+
+      for (final transaction in filtered) {
+        final account = accounts.getAccountById(transaction.accountId);
+        final category = categories.getCategoryById(transaction.categoryId);
+        final currency = account?.currency ?? auth.currentUserCurrency;
+        final signedAmount = transaction.type == 'income'
+            ? transaction.amount
+            : -transaction.amount;
+
+        buffer.writeln(
+          [
+            _csvField(_formatCsvDate(transaction.transactionDate)),
+            _csvField(account?.name ?? transaction.accountId),
+            _csvField(category?.name ?? transaction.categoryId),
+            _csvField(transaction.type),
+            _csvField(signedAmount.toStringAsFixed(2)),
+            _csvField(currency),
+            _csvField(transaction.description ?? ''),
+            _csvField(transaction.merchant ?? ''),
+            _csvField(transaction.isRecurring ? 'si' : 'no'),
+            _csvField(
+              transaction.purchaseDate == null
+                  ? ''
+                  : _formatCsvDate(transaction.purchaseDate!),
+            ),
+            _csvField(transaction.createdAt.toIso8601String()),
+          ].join(','),
+        );
+      }
+
+      final dir = await getTemporaryDirectory();
+      final fileName =
+          'transacciones_${_formatCsvDate(_filterStart)}_${_formatCsvDate(_filterEnd)}.csv';
+      final file = File(p.join(dir.path, fileName));
+      final bytes = <int>[0xEF, 0xBB, 0xBF, ...utf8.encode(buffer.toString())];
+      await file.writeAsBytes(bytes, flush: true);
+
+      await Share.shareXFiles(
+        [XFile(file.path, mimeType: 'text/csv', name: fileName)],
+        subject: 'Transacciones',
+        text:
+            'Exportacion de transacciones del ${_formatCsvDate(_filterStart)} al ${_formatCsvDate(_filterEnd)}',
+      );
+    } catch (e) {
+      Get.snackbar(
+        'Error',
+        'No se pudo exportar el CSV',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _exportingCsv = false);
+      }
+    }
+  }
 
   @override
   void initState() {
     super.initState();
     _applyFilters();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _openRecurringPrefillIfNeeded();
+    });
   }
 
   void _applyFilters() {
@@ -71,18 +228,30 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     tx.setDateFilter(_filterStart, _filterEnd);
   }
 
+  void _openRecurringPrefillIfNeeded() {
+    if (_openedRecurringPrefill) return;
+    final args = Get.arguments;
+    if (args is! Map<String, dynamic>) return;
+    final raw = args['recurringPaymentPrefill'];
+    if (raw is! Map) return;
+
+    _openedRecurringPrefill = true;
+    _openTransactionForm(
+      recurringPrefill: _RecurringPaymentTransactionPrefill.fromMap(
+        Map<String, dynamic>.from(raw),
+      ),
+    );
+  }
+
   bool _isCreditAccount(String? accountId) =>
       accountId != null && accounts.getAccountById(accountId)?.type == 'credit';
 
-  int _resolveCreditCutoffDay(String accountId) {
-    final linkedCard = cards.getCardByLinkedAccountId(accountId);
-    final cardCutoffDay = (linkedCard?.cardType == 'credit')
-        ? linkedCard?.statementDay
-        : null;
-    final accountCutoffDay = accounts
-        .getAccountById(accountId)
-        ?.creditCutoffDay;
-    return (cardCutoffDay ?? accountCutoffDay ?? 31).clamp(1, 31);
+  CreditCardPaymentConfig? _resolveCreditPaymentConfig(String accountId) {
+    final account = accounts.getAccountById(accountId);
+    return cards.getPaymentConfigForAccount(
+      accountId,
+      fallbackStatementDay: account?.creditCutoffDay,
+    );
   }
 
   Future<String?> _confirmDelete(Transaction transaction) async {
@@ -146,12 +315,24 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     _applyFilters();
   }
 
-  Future<void> _openTransactionForm({Transaction? initial}) async {
+  Future<void> _openTransactionForm({
+    Transaction? initial,
+    _RecurringPaymentTransactionPrefill? recurringPrefill,
+  }) async {
+    final isRecurringCompletion = initial == null && recurringPrefill != null;
     final amountController = TextEditingController(
-      text: initial != null ? initial.amount.toStringAsFixed(2) : '',
+      text: initial != null
+          ? initial.amount.toStringAsFixed(2)
+          : recurringPrefill != null
+          ? recurringPrefill.amount.toStringAsFixed(2)
+          : '',
     );
     final descriptionController = TextEditingController(
-      text: initial?.description ?? '',
+      text:
+          initial?.description ??
+          recurringPrefill?.description ??
+          recurringPrefill?.recipient ??
+          '',
     );
     final tcController = TextEditingController(
       text: initial != null ? initial.exchangeRate.toStringAsFixed(6) : '1.0',
@@ -159,11 +340,16 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     final msiMonthsController = TextEditingController(
       text: (initial?.installmentCount ?? 3).toString(),
     );
-    String type = initial?.type ?? 'expense';
-    String? accountId = initial?.accountId ?? _filterAccount;
-    String? categoryId = initial?.categoryId ?? _filterCategory;
+    String type = initial?.type ?? recurringPrefill?.type ?? 'expense';
+    String? accountId =
+        initial?.accountId ?? recurringPrefill?.accountId ?? _filterAccount;
+    String? categoryId =
+        initial?.categoryId ?? recurringPrefill?.categoryId ?? _filterCategory;
     DateTime purchaseDate =
-        initial?.purchaseDate ?? initial?.transactionDate ?? DateTime.now();
+        initial?.purchaseDate ??
+        initial?.transactionDate ??
+        recurringPrefill?.dueDate ??
+        DateTime.now();
     bool isMsi = initial?.isInstallmentPlan ?? false;
     int msiMonths = initial?.installmentCount ?? 3;
 
@@ -185,34 +371,39 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                   children: [
                     Text(
                       initial == null
-                          ? 'Nueva transacción'
+                          ? isRecurringCompletion
+                                ? 'Registrar pago recurrente'
+                                : 'Nueva transacción'
                           : 'Editar transacción',
                       style: AppTheme.titleMedium,
                     ),
                     const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        ChoiceChip(
-                          label: const Text('Gasto'),
-                          selected: type == 'expense',
-                          onSelected: (_) =>
-                              setModalState(() => type = 'expense'),
-                          selectedColor: AppTheme.errorColor.withValues(
-                            alpha: 0.12,
+                    if (!isRecurringCompletion)
+                      Row(
+                        children: [
+                          ChoiceChip(
+                            label: const Text('Gasto'),
+                            selected: type == 'expense',
+                            onSelected: (_) =>
+                                setModalState(() => type = 'expense'),
+                            selectedColor: AppTheme.errorColor.withValues(
+                              alpha: 0.12,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        ChoiceChip(
-                          label: const Text('Ingreso'),
-                          selected: type == 'income',
-                          onSelected: (_) =>
-                              setModalState(() => type = 'income'),
-                          selectedColor: AppTheme.successColor.withValues(
-                            alpha: 0.12,
+                          const SizedBox(width: 8),
+                          ChoiceChip(
+                            label: const Text('Ingreso'),
+                            selected: type == 'income',
+                            onSelected: (_) =>
+                                setModalState(() => type = 'income'),
+                            selectedColor: AppTheme.successColor.withValues(
+                              alpha: 0.12,
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
+                        ],
+                      ),
+                    if (isRecurringCompletion)
+                      Text('Tipo: Gasto', style: AppTheme.bodyMedium),
                     const SizedBox(height: 12),
                     TextField(
                       controller: amountController,
@@ -260,7 +451,8 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                     const SizedBox(height: 12),
                     if (type == 'expense' &&
                         _isCreditAccount(accountId) &&
-                        initial == null) ...[
+                        initial == null &&
+                        !isRecurringCompletion) ...[
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         title: const Text('Compra a Meses Sin Intereses'),
@@ -350,8 +542,9 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                           return;
                         }
                         if (initial == null) {
+                          final newTransactionId = Helpers.generateId();
                           final t = Transaction(
-                            id: '',
+                            id: newTransactionId,
                             userId: auth.currentUserId,
                             accountId: accountId!,
                             categoryId: categoryId!,
@@ -364,39 +557,66 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                                 ? null
                                 : descriptionController.text.trim(),
                             merchant: null,
-                            isRecurring: false,
+                            isRecurring: isRecurringCompletion,
                             createdAt: DateTime.now(),
                             exchangeRate: tc,
                           );
-                          final cutoffDay = _resolveCreditCutoffDay(accountId!);
+                          final creditConfig = _isCreditAccount(accountId)
+                              ? _resolveCreditPaymentConfig(accountId!)
+                              : null;
+                          Transaction? savedTransaction;
                           if (isMsi &&
                               type == 'expense' &&
                               _isCreditAccount(accountId)) {
                             await tx.addInstallmentPlan(
                               baseTransaction: t,
                               months: msiMonths,
-                              cutoffDay: cutoffDay,
+                              statementDay: creditConfig?.statementDay ?? 31,
+                              paymentGraceDays: creditConfig?.paymentGraceDays,
+                              legacyPaymentDay: creditConfig?.legacyPaymentDay,
                             );
                           } else if (type == 'expense' &&
                               _isCreditAccount(accountId)) {
-                            await tx.addCreditExpenseWithCutoff(
+                            savedTransaction = await tx.addCreditExpense(
                               purchaseTransaction: t,
-                              cutoffDay: cutoffDay,
+                              statementDay: creditConfig?.statementDay ?? 31,
+                              paymentGraceDays: creditConfig?.paymentGraceDays,
+                              legacyPaymentDay: creditConfig?.legacyPaymentDay,
                             );
                           } else {
-                            await tx.addTransaction(t);
+                            savedTransaction = await tx.addTransaction(t);
+                          }
+
+                          if (isRecurringCompletion &&
+                              savedTransaction != null) {
+                            await Get.find<RecurringPaymentController>()
+                                .linkTransactionToOccurrence(
+                                  paymentId: recurringPrefill.paymentId,
+                                  month: recurringPrefill.dueDate,
+                                  transactionId: savedTransaction.id,
+                                );
+                            await Get.find<DashboardController>()
+                                .loadDashboardData();
                           }
                         } else {
                           final isCreditExpense =
                               type == 'expense' && _isCreditAccount(accountId);
-                          final cutoffDayClamped = accountId != null
-                              ? _resolveCreditCutoffDay(accountId!)
-                              : 31;
+                          final creditConfig = accountId != null
+                              ? _resolveCreditPaymentConfig(accountId!)
+                              : null;
                           final transactionDate =
-                              isCreditExpense &&
-                                  !initial.isInstallmentPlan &&
-                                  purchaseDate.day > cutoffDayClamped
-                              ? _addMonthsKeepingDay(purchaseDate, 1)
+                              isCreditExpense && creditConfig != null
+                              ? CreditCardDateUtils.dueDateForPurchase(
+                                  purchaseDate: purchaseDate,
+                                  statementDay: creditConfig.statementDay,
+                                  cycleOffset: initial.isInstallmentPlan
+                                      ? ((initial.installmentIndex ?? 1) - 1)
+                                      : 0,
+                                  paymentGraceDays:
+                                      creditConfig.paymentGraceDays,
+                                  legacyPaymentDay:
+                                      creditConfig.legacyPaymentDay,
+                                )
                               : purchaseDate;
                           final updated = initial.copyWith(
                             accountId: accountId,
@@ -441,6 +661,17 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
             onPressed: () => _openTransactionForm(),
           ),
           IconButton(
+            icon: _exportingCsv
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.share),
+            tooltip: 'Exportar CSV',
+            onPressed: _exportingCsv ? null : _exportTransactionsCsv,
+          ),
+          IconButton(
             icon: const Icon(Icons.compare_arrows),
             tooltip: 'Traspaso entre cuentas',
             onPressed: _openTransferForm,
@@ -448,7 +679,28 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
         ],
       ),
       body: Obx(() {
-        final list = tx.filteredTransactions;
+        final accountIds = _selectedAccountIds();
+        final sortedList = tx.filteredTransactions.toList()
+          ..sort((a, b) {
+            final byDate = b.transactionDate.compareTo(a.transactionDate);
+            if (byDate != 0) return byDate;
+            return b.createdAt.compareTo(a.createdAt);
+          });
+        final summaryCurrency = accountIds.length == 1
+            ? (accounts.getAccountById(accountIds.first)?.currency ??
+                  auth.currentUserCurrency)
+            : auth.currentUserCurrency;
+        final openingBalance = _balanceAtDate(
+          accountIds,
+          _filterStart,
+          inclusive: false,
+        );
+        final periodNetChange = _periodNetChange(
+          accountIds,
+          _filterStart,
+          _filterEnd,
+        );
+        final closingBalance = openingBalance + periodNetChange;
         return SingleChildScrollView(
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -546,7 +798,49 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                 ],
               ),
               const SizedBox(height: 16),
-              if (list.isEmpty)
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: AppTheme.cardDecoration,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Saldo inicial', style: AppTheme.bodyMedium),
+                          const SizedBox(height: 4),
+                          Text(
+                            Helpers.formatCurrency(
+                              openingBalance,
+                              summaryCurrency,
+                            ),
+                            style: AppTheme.titleMedium,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Saldo final', style: AppTheme.bodyMedium),
+                          const SizedBox(height: 4),
+                          Text(
+                            Helpers.formatCurrency(
+                              closingBalance,
+                              summaryCurrency,
+                            ),
+                            style: AppTheme.titleMedium,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              if (sortedList.isEmpty)
                 Container(
                   padding: const EdgeInsets.all(24),
                   decoration: AppTheme.cardDecoration,
@@ -561,7 +855,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
                   itemBuilder: (ctx, i) {
-                    final t = list[i];
+                    final t = sortedList[i];
                     return Dismissible(
                       key: Key('tx_${t.id}'),
                       background: Container(
@@ -659,7 +953,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                     );
                   },
                   separatorBuilder: (_, index) => const Divider(height: 1),
-                  itemCount: list.length,
+                  itemCount: sortedList.length,
                 ),
             ],
           ),
@@ -861,6 +1155,43 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
           },
         );
       },
+    );
+  }
+}
+
+class _RecurringPaymentTransactionPrefill {
+  final String paymentId;
+  final String recipient;
+  final double amount;
+  final DateTime dueDate;
+  final String? accountId;
+  final String? categoryId;
+  final String? description;
+  final String type;
+
+  const _RecurringPaymentTransactionPrefill({
+    required this.paymentId,
+    required this.recipient,
+    required this.amount,
+    required this.dueDate,
+    this.accountId,
+    this.categoryId,
+    this.description,
+    this.type = 'expense',
+  });
+
+  factory _RecurringPaymentTransactionPrefill.fromMap(
+    Map<String, dynamic> map,
+  ) {
+    return _RecurringPaymentTransactionPrefill(
+      paymentId: map['paymentId'] as String,
+      recipient: map['recipient'] as String,
+      amount: (map['amount'] as num).toDouble(),
+      dueDate: DateTime.parse(map['dueDate'] as String),
+      accountId: map['accountId'] as String?,
+      categoryId: map['categoryId'] as String?,
+      description: map['description'] as String?,
+      type: (map['type'] as String?) ?? 'expense',
     );
   }
 }

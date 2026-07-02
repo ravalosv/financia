@@ -50,7 +50,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 TextFormField(
                   controller: _nameController,
                   decoration: const InputDecoration(labelText: 'Name'),
-                  validator: (v) => (v == null || v.isEmpty) ? 'Enter your name' : null,
+                  validator: (v) =>
+                      (v == null || v.isEmpty) ? 'Enter your name' : null,
                 ),
                 const SizedBox(height: 16),
                 TextFormField(
@@ -68,23 +69,34 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   controller: _passwordController,
                   decoration: const InputDecoration(labelText: 'Password'),
                   obscureText: true,
-                  validator: (v) => (v == null || v.length < 6) ? 'Min 6 characters' : null,
+                  validator: (v) =>
+                      (v == null || v.length < 6) ? 'Min 6 characters' : null,
                 ),
                 const SizedBox(height: 24),
-                Obx(() => ElevatedButton(
-                      onPressed: _auth.isLoading.value ? null : _submit,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTheme.primaryColor,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
-                      child: _auth.isLoading.value
-                          ? const SizedBox(
-                              height: 20,
-                              width: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation<Color>(Colors.white)),
-                            )
-                          : const Text('Sign Up', style: TextStyle(color: Colors.white)),
-                    )),
+                Obx(
+                  () => ElevatedButton(
+                    onPressed: _auth.isLoading.value ? null : _submit,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.primaryColor,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    child: _auth.isLoading.value
+                        ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Colors.white,
+                              ),
+                            ),
+                          )
+                        : const Text(
+                            'Sign Up',
+                            style: TextStyle(color: Colors.white),
+                          ),
+                  ),
+                ),
               ],
             ),
           ),

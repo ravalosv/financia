@@ -1,6 +1,8 @@
 import 'package:get/get.dart';
+import 'account_controller.dart';
 import '../models/transaction_model.dart';
 import '../database/database_service.dart';
+import '../utils/credit_card_date_utils.dart';
 import '../utils/helpers.dart';
 
 class TransactionController extends GetxController {
@@ -28,6 +30,9 @@ class TransactionController extends GetxController {
       isLoading(true);
       final loadedTransactions = await _databaseService.getAllTransactions();
       transactions.assignAll(loadedTransactions);
+      await _syncStoredBalances(
+        loadedTransactions.map((transaction) => transaction.accountId).toSet(),
+      );
       applyFilters();
     } catch (e) {
       Get.snackbar('Error', 'Failed to load transactions: $e');
@@ -36,7 +41,10 @@ class TransactionController extends GetxController {
     }
   }
 
-  Future<void> addTransaction(Transaction transaction) async {
+  Future<Transaction?> addTransaction(
+    Transaction transaction, {
+    bool showSuccessMessage = true,
+  }) async {
     try {
       isLoading(true);
       if (transaction.id.isEmpty) {
@@ -44,10 +52,15 @@ class TransactionController extends GetxController {
       }
       await _databaseService.insertTransaction(transaction);
       transactions.add(transaction);
+      await _syncStoredBalances({transaction.accountId});
       applyFilters();
-      Get.snackbar('Exito', 'Transaccion agregada correctamente');
+      if (showSuccessMessage) {
+        Get.snackbar('Exito', 'Transaccion agregada correctamente');
+      }
+      return transaction;
     } catch (e) {
       Get.snackbar('Error', 'No se pudo agregar la transaccion: $e');
+      return null;
     } finally {
       isLoading(false);
     }
@@ -56,7 +69,9 @@ class TransactionController extends GetxController {
   Future<void> addInstallmentPlan({
     required Transaction baseTransaction,
     required int months,
-    required int cutoffDay,
+    required int statementDay,
+    int? paymentGraceDays,
+    int? legacyPaymentDay,
   }) async {
     try {
       isLoading(true);
@@ -66,7 +81,6 @@ class TransactionController extends GetxController {
       final createdTransactions = <Transaction>[];
       final purchaseDate =
           baseTransaction.purchaseDate ?? baseTransaction.transactionDate;
-      final startOffset = purchaseDate.day > cutoffDay ? 1 : 0;
 
       for (var i = 0; i < months; i++) {
         final installmentAmount = i == months - 1
@@ -77,7 +91,13 @@ class TransactionController extends GetxController {
         final installment = baseTransaction.copyWith(
           id: Helpers.generateId(),
           amount: installmentAmount,
-          transactionDate: _addMonthsKeepingDay(purchaseDate, startOffset + i),
+          transactionDate: CreditCardDateUtils.dueDateForPurchase(
+            purchaseDate: purchaseDate,
+            statementDay: statementDay,
+            cycleOffset: i,
+            paymentGraceDays: paymentGraceDays,
+            legacyPaymentDay: legacyPaymentDay,
+          ),
           purchaseDate: purchaseDate,
           createdAt: DateTime.now(),
           installmentPlanId: planId,
@@ -90,6 +110,9 @@ class TransactionController extends GetxController {
       }
 
       transactions.addAll(createdTransactions);
+      await _syncStoredBalances(
+        createdTransactions.map((transaction) => transaction.accountId).toSet(),
+      );
       applyFilters();
       Get.snackbar('Exito', 'Compra MSI guardada correctamente');
     } catch (e) {
@@ -99,25 +122,33 @@ class TransactionController extends GetxController {
     }
   }
 
-  Future<void> addCreditExpenseWithCutoff({
+  Future<Transaction?> addCreditExpense({
     required Transaction purchaseTransaction,
-    required int cutoffDay,
+    required int statementDay,
+    int? paymentGraceDays,
+    int? legacyPaymentDay,
   }) async {
     final purchaseDate =
         purchaseTransaction.purchaseDate ?? purchaseTransaction.transactionDate;
-    final startOffset = purchaseDate.day > cutoffDay ? 1 : 0;
     final paymentTransaction = purchaseTransaction.copyWith(
-      transactionDate: _addMonthsKeepingDay(purchaseDate, startOffset),
+      transactionDate: CreditCardDateUtils.dueDateForPurchase(
+        purchaseDate: purchaseDate,
+        statementDay: statementDay,
+        paymentGraceDays: paymentGraceDays,
+        legacyPaymentDay: legacyPaymentDay,
+      ),
       purchaseDate: purchaseDate,
     );
-    await addTransaction(paymentTransaction);
+    return addTransaction(paymentTransaction);
   }
 
   Future<void> updateTransaction(Transaction transaction) async {
     try {
       isLoading(true);
 
-      // Update only the transaction record; balances are derived from transactions
+      final previousTransaction = transactions.firstWhereOrNull(
+        (t) => t.id == transaction.id,
+      );
 
       // Update in database
       await _databaseService.updateTransaction(transaction);
@@ -127,6 +158,10 @@ class TransactionController extends GetxController {
       if (index != -1) {
         transactions[index] = transaction;
       }
+      await _syncStoredBalances({
+        if (previousTransaction != null) previousTransaction.accountId,
+        transaction.accountId,
+      });
       applyFilters();
 
       Get.snackbar('Success', 'Transaction updated successfully');
@@ -137,13 +172,24 @@ class TransactionController extends GetxController {
     }
   }
 
-  Future<void> deleteTransaction(String transactionId) async {
+  Future<void> deleteTransaction(
+    String transactionId, {
+    bool showSuccessMessage = true,
+  }) async {
     try {
       isLoading(true);
+      final deletedTransaction = transactions.firstWhereOrNull(
+        (t) => t.id == transactionId,
+      );
       await _databaseService.deleteTransaction(transactionId);
       transactions.removeWhere((t) => t.id == transactionId);
+      if (deletedTransaction != null) {
+        await _syncStoredBalances({deletedTransaction.accountId});
+      }
       applyFilters();
-      Get.snackbar('Exito', 'Transaccion eliminada correctamente');
+      if (showSuccessMessage) {
+        Get.snackbar('Exito', 'Transaccion eliminada correctamente');
+      }
     } catch (e) {
       Get.snackbar('Error', 'No se pudo eliminar la transaccion: $e');
     } finally {
@@ -164,6 +210,11 @@ class TransactionController extends GetxController {
 
       final ids = transactionsToDelete.map((item) => item.id).toSet();
       transactions.removeWhere((item) => ids.contains(item.id));
+      await _syncStoredBalances(
+        transactionsToDelete
+            .map((transaction) => transaction.accountId)
+            .toSet(),
+      );
       applyFilters();
       Get.snackbar('Exito', 'Plan MSI cancelado correctamente');
     } catch (e) {
@@ -202,6 +253,10 @@ class TransactionController extends GetxController {
         transactions.removeWhere((x) => x.id == other!.id);
       }
 
+      await _syncStoredBalances({
+        t.accountId,
+        if (other != null) other.accountId,
+      });
       applyFilters();
       Get.snackbar('Success', 'Transfer deleted successfully');
     } catch (e) {
@@ -317,24 +372,11 @@ class TransactionController extends GetxController {
         .toList();
   }
 
-  DateTime _addMonthsKeepingDay(DateTime date, int monthsToAdd) {
-    final totalMonths = (date.year * 12) + date.month - 1 + monthsToAdd;
-    final year = totalMonths ~/ 12;
-    final month = (totalMonths % 12) + 1;
-    final day = date.day.clamp(1, _daysInMonth(year, month));
-    return DateTime(
-      year,
-      month,
-      day,
-      date.hour,
-      date.minute,
-      date.second,
-      date.millisecond,
-      date.microsecond,
-    );
-  }
-
-  int _daysInMonth(int year, int month) => DateTime(year, month + 1, 0).day;
-
   double _roundAmount(double value) => double.parse(value.toStringAsFixed(2));
+
+  Future<void> _syncStoredBalances(Iterable<String> accountIds) async {
+    if (!Get.isRegistered()) return;
+    final accountController = Get.find<AccountController>();
+    await accountController.syncStoredBalances(accountIds);
+  }
 }

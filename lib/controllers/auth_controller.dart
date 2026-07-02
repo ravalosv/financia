@@ -23,7 +23,7 @@ class AuthController extends GetxController {
 
       if (users.isNotEmpty) {
         currentUser.value = users.first;
-        isAuthenticated.value = !(currentUser.value?.biometricEnabled ?? false);
+        isAuthenticated.value = false;
       } else {
         isAuthenticated.value = false;
       }
@@ -46,7 +46,7 @@ class AuthController extends GetxController {
         email: email,
         name: name,
         currency: 'USD',
-        biometricEnabled: false,
+        biometricEnabled: true,
         createdAt: DateTime.now(),
         updatedAt: DateTime.now(),
       );
@@ -122,6 +122,35 @@ class AuthController extends GetxController {
       Get.offAllNamed('/dashboard');
     } catch (e) {
       Get.snackbar('Error', 'No se pudo autenticar: $e');
+    } finally {
+      isLoading.value = false;
+    }
+  }
+
+  Future<bool> authenticateOnAppEntry() async {
+    isLoading.value = true;
+    try {
+      if (currentUser.value == null) {
+        final users = DatabaseService.getUsersBox().values.toList();
+        if (users.isEmpty) {
+          return false;
+        }
+        currentUser.value = users.first;
+      }
+
+      if (!(currentUser.value?.biometricEnabled ?? true)) {
+        isAuthenticated.value = true;
+        return true;
+      }
+
+      final ok = await _deviceAuthService.authenticate(
+        reason: 'Autentica para ingresar a Financia',
+      );
+      isAuthenticated.value = ok;
+      return ok;
+    } catch (e) {
+      isAuthenticated.value = false;
+      return false;
     } finally {
       isLoading.value = false;
     }

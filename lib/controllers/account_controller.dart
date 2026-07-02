@@ -163,9 +163,30 @@ class AccountController extends GetxController {
 
   Future<void> updateAccountBalance(String accountId, double newBalance) async {
     try {
-      // Deprecated: balances are derived from transactions; no direct updates
+      final index = accounts.indexWhere((a) => a.id == accountId);
+      if (index == -1) return;
+      final updated = accounts[index].copyWith(balance: newBalance);
+      await _databaseService.updateAccount(updated);
+      accounts[index] = updated;
     } catch (e) {
       throw Exception('No se pudo actualizar el saldo de la cuenta: $e');
+    }
+  }
+
+  Future<void> syncStoredBalance(String accountId) async {
+    final account = getAccountById(accountId);
+    if (account == null) return;
+
+    final computedBalance = computeBalanceForAccount(accountId);
+    if (account.balance == computedBalance) return;
+
+    await updateAccountBalance(accountId, computedBalance);
+  }
+
+  Future<void> syncStoredBalances(Iterable<String> accountIds) async {
+    for (final accountId in accountIds.toSet()) {
+      if (accountId.isEmpty) continue;
+      await syncStoredBalance(accountId);
     }
   }
 
@@ -343,8 +364,25 @@ class AccountController extends GetxController {
         exchangeRate: incomeExchangeRate,
       );
 
-      await transactionController.addTransaction(expenseTransaction);
-      await transactionController.addTransaction(incomeTransaction);
+      final savedExpense = await transactionController.addTransaction(
+        expenseTransaction,
+        showSuccessMessage: false,
+      );
+      if (savedExpense == null) {
+        throw Exception('No se pudo registrar el egreso del traspaso');
+      }
+
+      final savedIncome = await transactionController.addTransaction(
+        incomeTransaction,
+        showSuccessMessage: false,
+      );
+      if (savedIncome == null) {
+        await transactionController.deleteTransaction(
+          savedExpense.id,
+          showSuccessMessage: false,
+        );
+        throw Exception('No se pudo registrar el ingreso del traspaso');
+      }
 
       Get.snackbar('Éxito', 'Traspaso completado');
     } catch (e) {

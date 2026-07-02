@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import '../routes/app_routes.dart';
 import '../controllers/account_controller.dart';
 import '../controllers/auth_controller.dart';
 import '../controllers/card_controller.dart';
@@ -46,9 +47,6 @@ class _AccountsScreenState extends State<AccountsScreen> {
     final currencyController = TextEditingController(
       text: initial?.currency ?? auth.currentUserCurrency,
     );
-    final cutoffDayController = TextEditingController(
-      text: initial?.creditCutoffDay?.toString() ?? '',
-    );
     String type = initial?.type ?? 'cash';
     bool isActive = initial?.isActive ?? true;
     String? linkedCardId = initial == null
@@ -63,13 +61,22 @@ class _AccountsScreenState extends State<AccountsScreen> {
           builder: (context, setModalState) {
             final availableCards = cards.getAvailableCardsForAccount(
               initial?.id,
+              accountType: type,
             );
+            final effectiveLinkedCardId =
+                linkedCardId != null &&
+                    availableCards.any((card) => card.id == linkedCardId)
+                ? linkedCardId
+                : null;
+            linkedCardId = effectiveLinkedCardId;
             return Padding(
               padding: EdgeInsets.only(
-                bottom: MediaQuery.of(ctx).viewInsets.bottom,
+                left: 16,
+                right: 16,
+                top: 16,
+                bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
               ),
-              child: Container(
-                padding: const EdgeInsets.all(16),
+              child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -113,19 +120,9 @@ class _AccountsScreenState extends State<AccountsScreen> {
                       decoration: const InputDecoration(labelText: 'Tipo'),
                     ),
                     const SizedBox(height: 12),
-                    if (type == 'credit') ...[
-                      TextField(
-                        controller: cutoffDayController,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: 'Día de corte',
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                    ],
                     DropdownButtonFormField<String?>(
                       isExpanded: true,
-                      initialValue: linkedCardId,
+                      initialValue: effectiveLinkedCardId,
                       decoration: const InputDecoration(
                         labelText: 'Tarjeta asociada',
                       ),
@@ -165,25 +162,12 @@ class _AccountsScreenState extends State<AccountsScreen> {
                       onPressed: () async {
                         final name = nameController.text.trim();
                         final selectedCurrency = currencyController.text.trim();
-                        final cutoffText = cutoffDayController.text.trim();
-                        final cutoffDay = cutoffText.isEmpty
-                            ? null
-                            : int.tryParse(cutoffText);
                         if (name.isEmpty) {
                           Get.snackbar('Validación', 'Ingresa un nombre');
                           return;
                         }
                         if (selectedCurrency.isEmpty) {
                           Get.snackbar('Validación', 'Ingresa una moneda');
-                          return;
-                        }
-                        if (type == 'credit' &&
-                            cutoffDay != null &&
-                            (cutoffDay < 1 || cutoffDay > 31)) {
-                          Get.snackbar(
-                            'Validación',
-                            'El día de corte debe estar entre 1 y 31',
-                          );
                           return;
                         }
                         if (initial == null) {
@@ -193,13 +177,6 @@ class _AccountsScreenState extends State<AccountsScreen> {
                                 type: type,
                                 currency: selectedCurrency,
                               );
-                          if (type == 'credit') {
-                            await accounts.updateAccount(
-                              createdAccount.copyWith(
-                                creditCutoffDay: cutoffDay,
-                              ),
-                            );
-                          }
                           await cards.assignCardToAccount(
                             accountId: createdAccount.id,
                             cardId: linkedCardId,
@@ -209,9 +186,6 @@ class _AccountsScreenState extends State<AccountsScreen> {
                             name: name,
                             type: type,
                             currency: selectedCurrency,
-                            creditCutoffDay: type == 'credit'
-                                ? cutoffDay
-                                : null,
                             isActive: isActive,
                           );
                           await accounts.updateAccount(updated);
@@ -343,9 +317,23 @@ class _AccountsScreenState extends State<AccountsScreen> {
                               'Tarjeta: ${linkedCard.name} • ****${linkedCard.last4}',
                           ].join(' • '),
                         ),
-                        trailing: Switch(
-                          value: a.isActive,
-                          onChanged: (_) => accounts.toggleAccountActive(a.id),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              tooltip: 'Estado de cuenta',
+                              onPressed: () => Get.toNamed(
+                                AppRoutes.accountStatement,
+                                arguments: {'accountId': a.id},
+                              ),
+                              icon: const Icon(Icons.receipt_long),
+                            ),
+                            Switch(
+                              value: a.isActive,
+                              onChanged: (_) =>
+                                  accounts.toggleAccountActive(a.id),
+                            ),
+                          ],
                         ),
                         onTap: () => _openAccountForm(initial: a),
                       ),
